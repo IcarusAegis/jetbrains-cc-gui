@@ -42,7 +42,7 @@ tasks.named('checkstyleTest') {
 }
 
 group = 'com.github.idea-claude-code-gui'
-version = '0.6.0-beta1-ccswitch.20261013.1'
+version = '0.6.0-beta2-ccswitch.20261014.4'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -124,6 +124,8 @@ dependencies {
         // Git-less IDE configurations. Used for real `git diff` via
         // git4idea.commands.* in the Commit AI feature.
         bundledPlugin('Git4Idea')
+        // Native Markdown preview annotations load only with this optional plugin.
+        bundledPlugin('org.intellij.plugins.markdown')
 
         instrumentationTools()
 
