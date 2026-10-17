@@ -12,6 +12,7 @@ import com.github.claudecodegui.provider.common.BaseSDKBridge;
 import com.github.claudecodegui.provider.common.DaemonBridge;
 import com.github.claudecodegui.provider.common.MessageCallback;
 import com.github.claudecodegui.provider.common.SDKResult;
+import com.github.claudecodegui.provider.common.SessionHistoryNotFoundException;
 import com.github.claudecodegui.settings.ConfigPathManager;
 
 import java.nio.charset.StandardCharsets;
@@ -575,6 +576,8 @@ public class CodexSDKBridge extends BaseSDKBridge {
             StringBuilder assistantContent = new StringBuilder();
             AtomicReference<String> lastNodeError = new AtomicReference<>();
             AtomicBoolean hadSendError = new AtomicBoolean(false);
+            boolean claimedThreadForSend = false;
+            boolean daemonDispatchAttempted = false;
             try {
                 String accessMode = CodemossSettingsService.CODEX_RUNTIME_ACCESS_INACTIVE;
                 try {
@@ -609,6 +612,7 @@ public class CodexSDKBridge extends BaseSDKBridge {
                         callback.onError(error);
                         return streamedResult;
                     }
+                    claimedThreadForSend = true;
                 }
                 JsonArray attachmentArray = buildCodexAttachments(attachments);
                 JsonObject params = CodexAppServerRequestExecutor.buildSendParams(
@@ -634,6 +638,7 @@ public class CodexSDKBridge extends BaseSDKBridge {
                 this.activeCallbacks.put(safeChannelId, callback);
                 this.callbackSubscriptions.put(safeChannelId, callback);
 
+                daemonDispatchAttempted = true;
                 CompletableFuture<SDKResult> resultFuture = this.appServerRequestExecutor.sendMessageViaDaemon(
                         daemon,
                         params,
@@ -665,6 +670,9 @@ public class CodexSDKBridge extends BaseSDKBridge {
                 }
                 return result;
             } catch (Exception e) {
+                if (claimedThreadForSend && !daemonDispatchAttempted) {
+                    CodexThreadOwnerRegistry.release(this.ownerScope, threadId, this.bridgeOwnerId);
+                }
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 String error = cause.getMessage() == null ? cause.toString() : cause.getMessage();
                 streamedResult.success = false;
@@ -1322,7 +1330,7 @@ public class CodexSDKBridge extends BaseSDKBridge {
                     }
                 }
                 try {
-                    List<JsonObject> legacy = this.getLegacySessionMessages(sessionId);
+                    List<JsonObject> legacy = this.getLegacySessionMessages(sessionId, cwd);
                     if (CodexNativeHistoryReader.countBlocks(messages, "tool_use") < CodexNativeHistoryReader.countBlocks(legacy, "tool_use")
                             || CodexNativeHistoryReader.countBlocks(messages, "thinking") < CodexNativeHistoryReader.countBlocks(legacy, "thinking")
                             || (!CodexNativeHistoryReader.hasUsage(messages) && CodexNativeHistoryReader.hasUsage(legacy))
@@ -1342,15 +1350,23 @@ public class CodexSDKBridge extends BaseSDKBridge {
             }
         }
         try {
-            return this.getLegacySessionMessages(sessionId);
+            return this.getLegacySessionMessages(sessionId, cwd);
+        } catch (SessionHistoryNotFoundException e) {
+            // A pruned rollout must reach the orchestrator's stale-session retire
+            // path instead of masquerading as an empty-but-valid transcript.
+            throw e;
         } catch (Exception e) {
             LOG.warn("Failed to load Codex session history: " + e.getMessage(), e);
             throw new IllegalStateException("Codex history is unavailable", e);
         }
     }
 
-    private List<JsonObject> getLegacySessionMessages(String sessionId) {
-        JsonArray items = this.gson.fromJson(this.historyReader.getSessionMessagesAsJson(sessionId), JsonArray.class);
+    private List<JsonObject> getLegacySessionMessages(String sessionId, String cwd) {
+        String messagesJson = this.historyReader.getSessionMessagesAsJson(sessionId);
+        if (messagesJson == null) {
+            throw new SessionHistoryNotFoundException(sessionId, cwd);
+        }
+        JsonArray items = this.gson.fromJson(messagesJson, JsonArray.class);
         return items == null ? List.of() : HistoryMessageInjector.convertCodexMessagesToFrontendBatch(items);
     }
 

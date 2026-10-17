@@ -162,7 +162,7 @@ describe('PermissionDialog', () => {
     expect(screen.queryByRole('button', { name: /permission.allow/ })).toBeNull();
   });
 
-  it('lists all native proposed file changes before approval', () => {
+  it('renders all native proposed file diffs before approval', () => {
     render(
       <PermissionDialog
         isOpen
@@ -170,9 +170,12 @@ describe('PermissionDialog', () => {
           provider: 'codex',
           codexMethod: 'item/fileChange/requestApproval',
           inputs: {
-            changes: {
-              'src/new.ts': { kind: 'add' },
-              'src/old.ts': { kind: { type: 'update', movePath: 'src/renamed.ts' } },
+            proposedChanges: {
+              'src/new.ts': { kind: 'add', diff: '+export const added = true;' },
+              'src/old.ts': {
+                kind: { type: 'update', movePath: 'src/renamed.ts' },
+                diff: '@@ -1 +1 @@\n-export const oldName = true;\n+export const newName = true;',
+              },
             },
           },
         })}
@@ -185,7 +188,32 @@ describe('PermissionDialog', () => {
     expect(screen.getByTestId('codex-file-preview').textContent).toContain('src/new.ts');
     expect(screen.getByTestId('codex-file-preview').textContent).toContain('src/old.ts');
     expect(screen.getByTestId('codex-file-preview').textContent).toContain('src/renamed.ts');
+    expect(screen.getByTestId('codex-file-preview').textContent).toContain('export const oldName = true;');
+    expect(screen.getByTestId('codex-file-preview').textContent).toContain('export const newName = true;');
+    expect(screen.getByTestId('codex-file-preview').querySelectorAll('.task-details')).toHaveLength(2);
     expect(screen.getByTestId('codex-file-preview').textContent).not.toContain('[object Object]');
+  });
+
+  it('blocks approval when native file metadata has no diff content', () => {
+    render(
+      <PermissionDialog
+        isOpen
+        request={buildRequest({
+          provider: 'codex',
+          codexMethod: 'item/fileChange/requestApproval',
+          suggestions: ['accept', 'decline'],
+          inputs: {
+            proposedChanges: [{ path: 'src/changed.ts', kind: 'update' }],
+          },
+        })}
+        onApprove={() => {}}
+        onSkip={() => {}}
+        onApproveAlways={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId('codex-file-preview').textContent).toContain('preview');
+    expect(screen.queryByRole('button', { name: /permission.allow/ })).toBeNull();
   });
 
   it('shows the native additional permission subset before granting it', () => {

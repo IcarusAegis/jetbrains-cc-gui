@@ -7,6 +7,8 @@ import MarkdownBlock from './MarkdownBlock';
 import { useDialogResize } from '../hooks/useDialogResize';
 import { isEditableEventTarget } from '../utils/isEditableEventTarget';
 import { clearDialogDraft, readDialogDraft, writeDialogDraft } from '../utils/dialogStateStorage';
+import { readPatchFiles } from '../utils/codexPatch';
+import EditDiffView from './toolBlocks/EditDiffView';
 
 export interface PermissionRequest {
   channelId: string;
@@ -188,13 +190,24 @@ const PermissionDialog = ({
     () => request ? getProposedChanges(request.inputs) : [],
     [request],
   );
+  const proposedFiles = useMemo(
+    () => readPatchFiles({ changes: proposedChanges }),
+    [proposedChanges],
+  );
+  const hasNativeDiff = proposedChanges.every((change) =>
+    typeof change.diff === 'string' || typeof change.unified_diff === 'string');
   const requestedPermissions = useMemo(
     () => request?.codexMethod === 'item/permissions/requestApproval'
       ? getRequestedPermissions(request.inputs)
       : null,
     [request],
   );
-  const previewUnavailable = isFileApproval && proposedChanges.length === 0;
+  const previewUnavailable = isFileApproval && (
+    proposedFiles.length === 0
+    || proposedFiles.length !== proposedChanges.length
+    || !hasNativeDiff
+    || proposedFiles.some((file) => !file.fullContentKnown)
+  );
   const permissionOptions = useMemo(() => {
     const allowsApprove = !previewUnavailable
       && (nativeDecisions === null || nativeDecisions.includes('accept'));
@@ -428,30 +441,38 @@ const PermissionDialog = ({
               className="permission-dialog-v3-command-content"
               style={dialogHeight ? { maxHeight: 'none' } : undefined}
             >
-              <MarkdownBlock content={commandContent} isStreaming={false} />
+              {isFileApproval ? (
+                <div className="codex-file-approval-preview" data-testid="codex-file-preview">
+                  {previewUnavailable ? (
+                    <p>{t('permission.previewUnavailable', 'Native file preview is unavailable. You can deny or cancel this request.')}</p>
+                  ) : proposedFiles.map((file, index) => (
+                    <section className="codex-file-approval-card" key={`${file.path}-${index}`}>
+                      <header className="codex-file-approval-header">
+                        <span className="codex-file-approval-kind">{file.kind}</span>
+                        <span className="codex-file-approval-path">
+                          {file.path}{file.movePath ? ` → ${file.movePath}` : ''}
+                        </span>
+                        <span className="codex-file-approval-stats">
+                          <span className="additions">+{file.diff.additions}</span>
+                          <span className="deletions">-{file.diff.deletions}</span>
+                        </span>
+                      </header>
+                      {file.diff.lines.length > 0 ? (
+                        <EditDiffView diff={file.diff} />
+                      ) : (
+                        <p className="codex-file-approval-empty">
+                          {t('permission.emptyDiff', 'The native diff is empty.')}
+                        </p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <MarkdownBlock content={commandContent} isStreaming={false} />
+              )}
             </div>
           )}
         </div>
-
-        {isFileApproval && (
-          <div className="permission-dialog-v3-preview" data-testid="codex-file-preview">
-            {previewUnavailable ? (
-              <p>{t('permission.previewUnavailable', 'Native file preview is unavailable. You can deny or cancel this request.')}</p>
-            ) : (
-              <ul>
-                {proposedChanges.map((change, index) => {
-                  const path = String(change.path ?? change.filePath ?? change.filename ?? `change-${index + 1}`);
-                  const nativeKind = change.kind && typeof change.kind === 'object'
-                    ? change.kind as Record<string, unknown> : null;
-                  const kind = String(nativeKind?.type ?? change.kind ?? change.status ?? change.action ?? 'change');
-                  const movePath = nativeKind?.movePath ?? change.newPath;
-                  return <li key={`${path}-${index}`}><strong>{kind}</strong> {path}
-                    {typeof movePath === 'string' && movePath ? ` → ${movePath}` : ''}</li>;
-                })}
-              </ul>
-            )}
-          </div>
-        )}
 
         {requestedPermissions && (
           <div className="permission-dialog-v3-preview" data-testid="codex-permission-scope">

@@ -1,6 +1,8 @@
 package com.github.claudecodegui.provider.codex;
 
 import com.github.claudecodegui.provider.common.DaemonBridge;
+import com.github.claudecodegui.provider.common.MessageCallback;
+import com.github.claudecodegui.provider.common.SDKResult;
 import com.github.claudecodegui.settings.CodemossSettingsService;
 import com.google.gson.JsonObject;
 import org.junit.Rule;
@@ -10,6 +12,7 @@ import org.junit.rules.TemporaryFolder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -70,6 +73,28 @@ public class CodexLifecycleCompletionTest {
         }
     }
 
+    /** A send that fails before daemon dispatch must release only its new writer claim. */
+    @Test
+    public void sendSetupFailureReleasesItsWriterClaim() throws Exception {
+        ControlledDaemon daemon = new ControlledDaemon();
+        String scope = this.folder.newFolder("home").getAbsolutePath();
+        String competingOwner = "another-window";
+        CodexSDKBridge bridge = new CodexSDKBridge(
+                this.folder.getRoot().toPath(), new FailingFixtureSettings(), () -> daemon, scope);
+        try {
+            SDKResult result = bridge.sendMessage(
+                    "channel", "hello", "root", scope, List.of(), "default", "test-model", "",
+                    "medium", null, new RecordingCallback()).get(5, TimeUnit.SECONDS);
+            assertFalse(result.success);
+            assertTrue(result.error.contains("fixture provider failure"));
+            assertTrue("provider failure occurs before daemon dispatch", daemon.connections.isEmpty());
+            assertTrue(CodexThreadOwnerRegistry.claim(scope, "root", competingOwner).acquired());
+        } finally {
+            bridge.cleanupAllProcesses();
+            CodexThreadOwnerRegistry.releaseOwner(competingOwner);
+        }
+    }
+
     private record PendingConnection(String epoch, DaemonBridge.DaemonOutputCallback callback,
                                      CompletableFuture<Boolean> result) {
         private void complete(boolean success) {
@@ -113,7 +138,7 @@ public class CodexLifecycleCompletionTest {
         }
     }
 
-    private static final class FixtureSettings extends CodemossSettingsService {
+    private static class FixtureSettings extends CodemossSettingsService {
         /** Authorizes only the isolated fixture runtime. */
         @Override
         public String getCodexRuntimeAccessMode() { return CODEX_RUNTIME_ACCESS_CLI_LOGIN; }
@@ -121,5 +146,32 @@ public class CodexLifecycleCompletionTest {
         /** Keeps provider capture free of real credentials. */
         @Override
         public JsonObject getActiveCodexProvider() { return new JsonObject(); }
+    }
+
+    /** Forces send setup to fail after the bridge has claimed the restored thread. */
+    private static final class FailingFixtureSettings extends FixtureSettings {
+        /** Simulates an unreadable provider configuration before daemon dispatch. */
+        @Override
+        public JsonObject getActiveCodexProvider() {
+            throw new IllegalStateException("fixture provider failure");
+        }
+    }
+
+    /** Accepts failure callbacks without involving a chat window. */
+    private static final class RecordingCallback implements MessageCallback {
+        /** This fixture does not consume streamed messages. */
+        @Override
+        public void onMessage(String type, String content) {
+        }
+
+        /** The result object carries the same failure asserted by the test. */
+        @Override
+        public void onError(String error) {
+        }
+
+        /** Setup failure must not complete successfully. */
+        @Override
+        public void onComplete(SDKResult result) {
+        }
     }
 }

@@ -9,8 +9,6 @@
  * - Related file information
  */
 
-import { pathToFileURL } from 'node:url';
-
 import {
   loadClaudeSdk,
   isClaudeSdkAvailable,
@@ -24,7 +22,7 @@ import {
   getCliUserAgent,
 } from '../config/api-config.js';
 import { resolveModelFromSettings, resolveSdkModelName } from '../utils/model-utils.js';
-import { getRealHomeDir } from '../utils/path-utils.js';
+import { getRealHomeDir, isMainEntryModule } from '../utils/path-utils.js';
 import { getClaudeCliPathOverride } from '../utils/claude-cli-path.js';
 import { ensureAnthropicSdk } from './claude/message-utils.js';
 import { generateCodexText } from './codex/codex-text-service.js';
@@ -727,6 +725,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainEntryModule(import.meta.url)) {
   main();
 }

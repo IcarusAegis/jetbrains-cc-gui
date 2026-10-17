@@ -35,11 +35,29 @@ class CodexHistorySessionService {
         this.gson = gson;
     }
 
+    /**
+     * Returns the session transcript as JSON, or null when the rollout file is
+     * missing. A missing file is an expected stale-session state (rollouts can
+     * be pruned by the CLI or removed externally), so callers turn null into a
+     * history-missing signal instead of an empty-but-successful transcript.
+     */
     String getSessionMessagesAsJson(String sessionId) {
+        List<CodexHistoryReader.CodexMessage> messages = new ArrayList<>();
+        Path sessionFile;
         try {
-            List<CodexHistoryReader.CodexMessage> messages = new ArrayList<>();
-            forEachSessionMessage(sessionId, messages::add);
+            sessionFile = findSessionFile(sessionId);
+        } catch (IOException e) {
+            LOG.error("[CodexHistoryReader] Failed to locate session file: " + e.getMessage(), e);
+            return gson.toJson(messages);
+        }
+        if (sessionFile == null) {
+            LOG.info("[CodexHistoryReader] Codex session file is missing (pruned by the CLI or never persisted): "
+                    + sessionId);
+            return null;
+        }
 
+        try {
+            readSessionFile(sessionFile, messages::add);
             return gson.toJson(messages);
         } catch (Exception e) {
             LOG.error("[CodexHistoryReader] Failed to read session messages: " + e.getMessage(), e);
@@ -53,7 +71,11 @@ class CodexHistorySessionService {
         if (sessionFile == null) {
             throw new IOException("Codex session file not found: " + sessionId);
         }
+        return readSessionFile(sessionFile, consumer);
+    }
 
+    private int readSessionFile(Path sessionFile,
+                                Consumer<CodexHistoryReader.CodexMessage> consumer) throws IOException {
         int messageCount = 0;
         try (BufferedReader reader = Files.newBufferedReader(sessionFile, StandardCharsets.UTF_8)) {
             String line;

@@ -196,13 +196,20 @@ public class CodexHistoryReader {
         return normalized;
     }
 
+    /**
+     * Returns the privacy-filtered transcript, or null when the rollout file is
+     * missing and the caller should treat the session id as stale.
+     */
     public String getSessionMessagesAsJson(String sessionId) {
         logSessionAccessWithoutLocalConfigAuthorization();
+        String source = this.sessionService.getSessionMessagesAsJson(sessionId);
+        if (source == null) {
+            return null;
+        }
         CodexHistoryPrivacy privacy = new CodexHistoryPrivacy(sessionId);
-        com.google.gson.JsonArray source = this.gson.fromJson(
-                this.sessionService.getSessionMessagesAsJson(sessionId), com.google.gson.JsonArray.class);
+        com.google.gson.JsonArray sourceArray = this.gson.fromJson(source, com.google.gson.JsonArray.class);
         com.google.gson.JsonArray result = new com.google.gson.JsonArray();
-        for (var entry : source) {
+        for (var entry : sourceArray) {
             result.add(entry.isJsonObject() ? privacy.protect(entry.getAsJsonObject()) : entry);
         }
         return this.gson.toJson(result);

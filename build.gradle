@@ -42,7 +42,18 @@ tasks.named('checkstyleTest') {
 }
 
 group = 'com.github.idea-claude-code-gui'
+// Keep this line as a plain literal: webview/scripts/extract-version.mjs matches it
+// with /^version\s*=\s*'(.+)'$/ to generate the webview's APP_VERSION.
 version = '0.6.0-beta1'
+
+// Local-only override for custom builds (e.g. distribution flavors). Put
+// plugin.version=... in the gitignored local.properties (or pass -Pplugin.version=...)
+// instead of editing the line above, so a personal build version can never ride along
+// into a shared branch again.
+def pluginVersionOverride = getLocalProperty('plugin.version')
+if (pluginVersionOverride) {
+    version = pluginVersionOverride
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
