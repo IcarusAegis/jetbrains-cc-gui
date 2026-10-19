@@ -100,6 +100,29 @@ test('windows launches a node-script Grok CLI through node.exe', () => {
   assert.deepEqual(unix.args, ['agent', 'stdio']);
 });
 
+test('windows launches a .cmd Grok shim through cmd.exe, not a direct spawn', () => {
+  const env = { PATH: 'C:\\Windows\\system32', ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+  const shim = resolveGrokAgentLaunch('C:\\Program Files\\nodejs\\grok.cmd', 'win32', env);
+  assert.equal(shim.file, 'C:\\Windows\\system32\\cmd.exe');
+  // /s strips the outer quotes, leaving `"grok.cmd" "agent" "stdio"`.
+  assert.deepEqual(shim.args, ['/d', '/s', '/c', '""grok.cmd" "agent" "stdio""']);
+  assert.equal(shim.windowsHide, true);
+  assert.equal(shim.options.shell, false);
+  assert.equal(shim.options.windowsVerbatimArguments, true);
+  // Invoked by basename with the shim directory prepended to PATH, so the
+  // spaced `C:\Program Files\...` prefix never becomes the command token.
+  assert.match(shim.options.env.PATH, /^C:\\Program Files\\nodejs;/);
+  assert.equal(shim.args[3].includes('C:\\Program'), false);
+
+  const bat = resolveGrokAgentLaunch('C:\\tools\\grok.bat', 'win32', env);
+  assert.equal(bat.file, 'C:\\Windows\\system32\\cmd.exe');
+
+  // POSIX still launches the shim path directly.
+  const posix = resolveGrokAgentLaunch('/usr/local/bin/grok.cmd', 'linux');
+  assert.equal(posix.file, '/usr/local/bin/grok.cmd');
+  assert.deepEqual(posix.args, ['agent', 'stdio']);
+});
+
 test('runAcpTurn answers _x.ai/ask_user_question with accepted, not the permission allow', async () => {
   const { runAcpTurn } = await import('./grok-acp-client.js');
   const timer = setInterval(answerPendingQuestion, 20);

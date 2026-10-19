@@ -412,8 +412,8 @@
       "installPolicyTip": "Problème d'installation ? Copiez l'erreur vers un CLI AI terminal pour résoudre",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Requis pour les fonctionnalités Claude AI. Inclut Claude Code SDK et les dépendances associées.",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Requis pour les fonctionnalités Codex AI. Détecte la CLI officielle Codex (@openai/codex) installée dans la page CLI ; le chat utilise app-server.",
+      "codexMigratedTitle": "Codex a été déplacé vers Gestion des fournisseurs → CLI",
+      "codexMigratedDesc": "Codex n'installe plus de SDK ici : il utilise la CLI Codex déjà installée sur votre machine (@openai/codex) et le chat passe par l'app-server officiel. Consultez son état dans Gestion des fournisseurs → CLI ; si elle n'est pas installée, lancez npm install -g @openai/codex dans un terminal, puis cliquez sur Re-check sur cette page.",
       "loading": "Chargement de l'état des dépendances...",
       "install": "Installer",
       "installing": "Installation...",
@@ -2056,10 +2056,9 @@
       "reason": "Le plugin lance « codex app-server » depuis le CLI Codex détecté sur votre machine. Une copie à moitié installée - par exemple une installation globale npm dont le binaire de plateforme manque - se termine par le code 1 et fait échouer le tour.",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "Option 1 : supprimer l'installation cassée et réinstaller le CLI officiel",
-          "step0": "1. Supprimez d'abord l'installation globale résiduelle (deux copies installées est la cause la plus fréquente) :",
-          "step1": "2. Réinstallez le CLI officiel, depuis le registre npm officiel et non un miroir :",
-          "step2": "3. Vérifiez que le CLI répond avant de renvoyer :"
+          "title": "Option 1 : installer ou mettre à jour le CLI en suivant les instructions officielles",
+          "step0": "1. Ouvrez les instructions officielles et choisissez l'installateur autonome, npm ou Homebrew selon votre environnement d'exécution. Mettez à jour par le canal d'installation d'origine ; n'exécutez pas npm uninstall sur une installation autonome :",
+          "step1": "2. Vérifiez la version dans un nouveau terminal, actualisez Gestion des fournisseurs → CLI, puis renvoyez :"
         },
         "pointCodexBin": {
           "title": "Option 2 : pointer le plugin vers un binaire fonctionnel",

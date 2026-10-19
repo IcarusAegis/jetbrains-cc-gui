@@ -242,14 +242,14 @@ const PermissionDialog = ({
   }, [nativeDecisionPayloads, nativeDecisions, previewUnavailable, t]);
 
   const handleTimeout = useCallback(() => {
-    if (request) {
-      clearDialogDraft('permission', request.channelId, request.dialogToken);
-      if (nativeDecisions?.includes('cancel')) {
-        onCancel?.(request.channelId);
-      } else {
-        onSkip(request.channelId);
-      }
-    }
+    if (!request) return;
+    const sent = nativeDecisions?.includes('cancel')
+      ? (onCancel ?? onSkip)(request.channelId)
+      : onSkip(request.channelId);
+    // A refused bridge write leaves the dialog open; returning false re-arms
+    // the countdown hook so the next interaction retries this decision.
+    if (sent === false) return false;
+    clearDialogDraft('permission', request.channelId, request.dialogToken);
   }, [nativeDecisions, onCancel, onSkip, request]);
 
   const { remainingSeconds, isTimeWarning, markSubmitted, restoreSubmission } = useDialogCountdownTimeout({

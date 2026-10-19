@@ -246,7 +246,9 @@ describe('CliSection', () => {
     fireEvent.click(guideButtons[0]);
 
     expect(await screen.findByRole('dialog')).toBeTruthy();
-    expect(screen.getAllByText('npm install -g @openai/codex').length).toBeGreaterThan(0);
+    expect(screen.getByText('curl -fsSL https://chatgpt.com/codex/install.sh | sh')).toBeTruthy();
+    expect(screen.getByText('powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"')).toBeTruthy();
+    expect(screen.getByText('npm install -g @openai/codex')).toBeTruthy();
     // Never triggers install via Java bridge
     const calls = (window.sendToJava as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
     expect(calls.every((c) => !c.includes('install'))).toBe(true);
@@ -265,6 +267,6 @@ describe('CliSection', () => {
     expect(await screen.findByRole('dialog')).toBeTruthy();
 
     fireEvent.click(screen.getByText('Docs'));
-    expect(window.sendToJava).toHaveBeenCalledWith('open_browser_external:https://developers.openai.com/codex/cli/');
+    expect(window.sendToJava).toHaveBeenCalledWith('open_browser_external:https://learn.chatgpt.com/docs/codex/cli#getting-started');
   });
 });

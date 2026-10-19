@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import {
+  codexHomeCandidates,
   resolveCodexCli,
   resolveManagedCodexCli,
   targetTripleFor,
@@ -44,6 +46,75 @@ function installLegacyLayout(depsRoot) {
   mkdirSync(binaryDir, { recursive: true });
   writeFileSync(join(binaryDir, 'codex.exe'), 'binary', 'utf8');
   return mainPkg;
+}
+
+test('standalone candidates follow the selected release on macOS and Linux', () => {
+  const home = join(tmpdir(), 'codex-home');
+  const current = join(home, '.codex', 'packages', 'standalone', 'current');
+  const expected = [
+    join(home, '.local', 'bin', '{bin}'),
+    join(current, 'bin', '{bin}'),
+    join(current, '{bin}'),
+    join(home, '.cargo', 'bin', '{bin}'),
+    join(home, '.codex', 'bin', '{bin}'),
+  ];
+  for (const platform of ['linux', 'darwin']) {
+    assert.deepEqual(codexHomeCandidates({ home, platform, env: {} }), expected);
+    assert.deepEqual(codexHomeCandidates({ home, platform, env: { CODEX_HOME: ' ', CODEX_INSTALL_DIR: ' ' } }), expected);
+  }
+});
+
+test('Windows standalone discovery includes the visible junction without relying on PATH', () => {
+  const home = join(tmpdir(), 'codex-home');
+  const localAppData = join(home, 'Local AppData');
+  const candidates = codexHomeCandidates({ home, platform: 'win32', env: { LOCALAPPDATA: localAppData } });
+  assert.equal(candidates[0], join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', '{bin}'));
+  assert.ok(candidates.includes(join(home, '.codex', 'packages', 'standalone', 'current', 'bin', '{bin}')));
+  assert.equal(codexHomeCandidates({ home, platform: 'win32', env: {} })[0],
+    join(home, 'AppData', 'Local', 'Programs', 'OpenAI', 'Codex', 'bin', '{bin}'));
+});
+
+test('installer directory and data home overrides remain independent', () => {
+  const home = join(tmpdir(), 'codex-home');
+  const data = join(home, 'Custom Codex Home');
+  const install = join(home, 'Custom Bin');
+  const candidates = codexHomeCandidates({ home, platform: 'linux',
+    env: { CODEX_HOME: ` ${data} `, CODEX_INSTALL_DIR: ` ${install} ` } });
+  assert.equal(candidates[0], join(install, '{bin}'));
+  assert.ok(candidates.includes(join(home, '.local', 'bin', '{bin}')));
+  assert.ok(candidates.includes(join(data, 'packages', 'standalone', 'current', 'bin', '{bin}')));
+  assert.ok(candidates.includes(join(data, 'packages', 'standalone', 'current', '{bin}')));
+  assert.ok(!candidates.includes(join(home, '.codex', 'packages', 'standalone', 'current', 'bin', '{bin}')));
+});
+
+for (const layout of ['current/bin', 'current', 'install-dir']) {
+  test(`discovers a standalone ${layout} entry with a sparse IDE PATH and no npm`, () => {
+    const root = makeDepsRoot();
+    try {
+      const data = join(root, 'Custom Codex Home');
+      const install = join(root, 'Custom Bin');
+      const dir = layout === 'install-dir' ? install : join(data, 'packages', 'standalone', layout);
+      const binary = join(dir, process.platform === 'win32' ? 'codex.exe' : 'codex');
+      mkdirSync(dir, { recursive: true });
+      // Discovery never spawns the CLI, so the placeholder need not launch.
+      writeFileSync(binary, 'not an executable', 'utf8');
+      const output = execFileSync(process.execPath, ['--input-type=module', '-e',
+        `import { resolveCodexCli } from ${JSON.stringify(new URL('./codex-cli-resolver.js', import.meta.url).href)};
+         console.log(JSON.stringify(resolveCodexCli()));`], {
+        encoding: 'utf8',
+        timeout: 20000,
+        env: { ...process.env, HOME: root, USERPROFILE: root, LOCALAPPDATA: join(root, 'Local'),
+          PATH: root, Path: root, SHELL: '/bin/sh', CODEX_HOME: data,
+          CODEX_INSTALL_DIR: layout === 'install-dir' ? install : '',
+          CODEX_BIN: '', CODEX_PATH: '', CODEX_CLI_PATH: '' },
+      });
+      const result = JSON.parse(output);
+      assert.equal(result.status, 'resolved');
+      assert.equal(result.source, 'external');
+      assert.equal(result.kind, 'native-binary');
+      assert.deepEqual(result.command, [binary]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 }
 
 test('targetTripleFor maps known platform/arch pairs and rejects others', () => {
@@ -348,4 +419,35 @@ test('an SDK metadata directory alone is unavailable while an original SDK vendo
     writeFileSync(join(dir, 'codex.exe'), 'fixture', 'utf8');
     assert.equal(resolveCodexCli(options).source, 'legacy');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('discovery ignores a hijacked live PATH when a pristine env is supplied', () => {
+  const root = makeDepsRoot();
+  const savedPath = process.env.PATH;
+  try {
+    const evilDir = join(root, 'evil-bin');
+    mkdirSync(evilDir, { recursive: true });
+    const fake = join(evilDir, process.platform === 'win32' ? 'codex.exe' : 'codex');
+    // Discovery never spawns the CLI, so the placeholder need not launch.
+    writeFileSync(fake, 'not an executable', 'utf8');
+    const safeDir = join(root, 'safe-bin');
+    mkdirSync(safeDir, { recursive: true });
+    // Simulate the daemon applying request-scoped params.env to the global
+    // process: an attacker-injected PATH now leads with the fake binary.
+    process.env.PATH = `${evilDir}${delimiter}${savedPath ?? ''}`;
+    try {
+      const result = resolveCodexCli({
+        depsRoot: null,
+        env: { PATH: safeDir, Path: safeDir, SHELL: process.env.SHELL ?? '/bin/sh' },
+      });
+      const selected = result.status === 'resolved' ? result.command : [];
+      const offered = (result.candidates ?? []).flatMap((entry) => entry.command ?? []);
+      assert.ok(!selected.includes(fake), `hijacked binary was selected: ${fake}`);
+      assert.ok(!offered.includes(fake), `hijacked binary was offered as a fallback: ${fake}`);
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

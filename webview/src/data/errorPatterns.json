@@ -95,12 +95,8 @@
           "recommended": true,
           "steps": [
             {
-              "kind": "command",
-              "command": "npm uninstall -g @openai/codex"
-            },
-            {
-              "kind": "command",
-              "command": "npm install -g @openai/codex@latest"
+              "kind": "link",
+              "url": "https://learn.chatgpt.com/docs/codex/cli#getting-started"
             },
             {
               "kind": "command",

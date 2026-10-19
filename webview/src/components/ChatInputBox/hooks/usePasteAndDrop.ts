@@ -59,6 +59,8 @@ interface ImagePasteScope {
 
 const NATIVE_IMAGE_TIMEOUT_MS = 30000;
 const IMAGE_SCOPE_RETRY_MS = 1000;
+/** Bounded polling: afterwards the bridge-ready event (or the next draft) re-arms. */
+const IMAGE_SCOPE_RETRY_LIMIT = 30;
 
 /**
  * usePasteAndDrop - Handle paste and drag-drop operations
@@ -93,6 +95,7 @@ export function usePasteAndDrop({
   const mountedRef = useRef(false);
   const draftScopeIdRef = useRef<string | null>(null);
   const scopeRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scopeRetryAttemptsRef = useRef(0);
   const publicationSequenceRef = useRef(0);
   const committedPublicationRef = useRef(0);
   const [publication, setPublication] = useState(0);
@@ -104,9 +107,16 @@ export function usePasteAndDrop({
       scopeRetryTimerRef.current = null;
     }
     const sent = sendBridgeEvent('paste_image_scope', draftScopeIdRef.current ?? '');
-    if (!sent && mountedRef.current) {
-      // Native offers need this handshake; a refused send cannot disable pastes
-      // for the rest of the draft. Retry the current id, never a retired one.
+    if (sent) {
+      scopeRetryAttemptsRef.current = 0;
+      return;
+    }
+    // Native offers need this handshake; a refused send cannot disable pastes
+    // for the rest of the draft. Retry the current id, never a retired one —
+    // but stop short of an endless 1s poll when no bridge ever attaches: the
+    // BRIDGE_READY_EVENT listener and the next draft re-arm publication.
+    if (mountedRef.current && scopeRetryAttemptsRef.current < IMAGE_SCOPE_RETRY_LIMIT) {
+      scopeRetryAttemptsRef.current += 1;
       scopeRetryTimerRef.current = setTimeout(publishImageScope, IMAGE_SCOPE_RETRY_MS);
     }
   }, []);
@@ -117,6 +127,7 @@ export function usePasteAndDrop({
     nativeRequestsRef.current.clear();
     // Native gestures bind to this id before their queued offer can reach a replacement draft.
     draftScopeIdRef.current = mountedRef.current ? generateId() : null;
+    scopeRetryAttemptsRef.current = 0;
     publishImageScope();
     if (mountedRef.current) {
       setIsPreparingImages(false);
@@ -125,11 +136,15 @@ export function usePasteAndDrop({
 
   useLayoutEffect(() => {
     mountedRef.current = true;
-    window.addEventListener(BRIDGE_READY_EVENT, publishImageScope);
+    const republishOnBridgeReady = () => {
+      scopeRetryAttemptsRef.current = 0;
+      publishImageScope();
+    };
+    window.addEventListener(BRIDGE_READY_EVENT, republishOnBridgeReady);
     invalidateImagePastes();
     return () => {
       mountedRef.current = false;
-      window.removeEventListener(BRIDGE_READY_EVENT, publishImageScope);
+      window.removeEventListener(BRIDGE_READY_EVENT, republishOnBridgeReady);
       invalidateImagePastes();
     };
   }, [currentSessionId, invalidateImagePastes, publishImageScope]);

@@ -341,7 +341,9 @@ public class CodexHistoryPageIndexTest {
         var entriesField = CodexHistoryPageIndex.class.getDeclaredField("entries");
         entriesField.setAccessible(true);
         var entries = (java.util.Map<?, ?>) entriesField.get(this.index);
-        Object entry = entries.get(this.session);
+        // Production keys entries by the session file's real path (/var is a
+        // symlink to /private/var on macOS).
+        Object entry = entries.get(this.session.toRealPath());
         var snapshotField = entry.getClass().getDeclaredField("snapshot");
         snapshotField.setAccessible(true);
         var readSnapshot = snapshotField.getType().getDeclaredMethod("read", Path.class);
@@ -448,6 +450,25 @@ public class CodexHistoryPageIndexTest {
                 .messages.get(1).get("content").getAsString());
     }
 
+    /** A stale request cancelled while paging must not evict the fully indexed entry. */
+    @Test
+    public void cancellationDuringPagingKeepsTheIndexedEntry() throws Exception {
+        Files.writeString(this.session, user("question") + assistant("answer"));
+        var indexed = this.index.read(this.reader, "fixture", null, 30, () -> true);
+        assertEquals(2, indexed.messages.size());
+        assertEquals(1, this.index.size());
+        var spools = this.index.spoolFiles();
+        assertEquals(1, spools.size());
+        AtomicInteger checks = new AtomicInteger();
+        assertThrows(CancellationException.class, () -> this.index.read(this.reader, "fixture", null, 30,
+                () -> checks.incrementAndGet() < 2));
+        assertEquals("a fully indexed entry survives another request's cancellation", 1, this.index.size());
+        assertTrue(spools.stream().allMatch(Files::exists));
+        var cached = this.index.read(this.reader, "fixture", null, 30, () -> true);
+        assertEquals(indexed.messages, cached.messages);
+        assertEquals("the follow-up read is served from the retained cache", 0, cached.rawRecordCount);
+    }
+
     /** Fingerprints must describe the parsed bytes rather than a rewrite observed after parsing. */
     @Test
     public void rewriteAfterParsingCannotBecomeTheOldPagesFingerprint() throws Exception {
@@ -504,14 +525,16 @@ public class CodexHistoryPageIndexTest {
             var entriesField = CodexHistoryPageIndex.class.getDeclaredField("entries");
             entriesField.setAccessible(true);
             var entries = (java.util.Map<?, ?>) entriesField.get(this.index);
-            Object entry = entries.get(this.session);
+            // Production keys entries by the session file's real path; on macOS
+            // the temp dir's /var is a symlink to /private/var.
+            Object entry = entries.get(this.session.toRealPath());
             if (entry == null) {
                 return 0;
             }
             var field = entry.getClass().getDeclaredField(fieldName);
             field.setAccessible(true);
             return ((java.util.List<?>) field.get(entry)).size();
-        } catch (ReflectiveOperationException exception) {
+        } catch (ReflectiveOperationException | java.io.IOException exception) {
             throw new AssertionError(exception);
         }
     }

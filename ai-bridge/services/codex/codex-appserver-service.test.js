@@ -1034,6 +1034,8 @@ test('exhausted candidates settle the turn with every CLI attempt and the fix hi
     assert.match(result.error, /second-cli: codex app-server exited/);
     assert.match(result.error, /spawn vendor\/codex ENOENT/);
     assert.match(result.error, /Codex CLI check/);
+    assert.ok(result.error.includes('https://learn.chatgpt.com/docs/codex/cli#getting-started'));
+    assert.ok(!result.error.includes('npm install'));
   } finally { await service.resetRuntime(); }
 });
 
@@ -2081,6 +2083,40 @@ test('an interrupted turn closes unfinished tool cards and drops only its cached
     assert.equal(messages.filter((message) => message.codexItemId === 'running-edit').at(-1).message.content[0].input.status, 'interrupted');
     assert.equal([...service.itemSnapshots.values()].some((item) => item.threadId === service.rootThreadId), false);
     assert.equal(service.itemSnapshots.get('child-fixture:child-running').status, 'inProgress');
+  } finally { await service.resetRuntime(); }
+});
+
+test('turn/aborted settles the bound operation instead of stalling the FIFO queue', async () => {
+  const { service, events, getClient, getPeer } = makeService({ scenario: 'never-respond' });
+  try {
+    const send = service.send({ input: [{ type: 'text', text: 'abort me' }] });
+    await waitFor(() => [...service.operations.values()][0]?.nativeTurnId);
+    const operation = [...service.operations.values()][0];
+    for (const id of getPeer().pendingAcks.keys()) getPeer().ackPending(id, { turn: { id: operation.nativeTurnId } });
+    getClient().emit('notification', { method: 'turn/aborted', params: {
+      threadId: operation.threadId, turn: { id: operation.nativeTurnId } } });
+    // No turn/completed follows: the abort alone must end the operation.
+    assert.equal((await send).outcome, 'interrupted');
+    assert.equal(operation.settled, true);
+    assert.equal(service.busy, false);
+    assert.equal(service.threads.get(operation.threadId)?.state, 'idle');
+    assert.equal(eventsOf(events, 'turnAborted').length, 1);
+    assert.equal(eventsOf(events, 'operationDone').length, 1);
+
+    // A late turn/completed for the aborted turn must not resurrect settled work.
+    getClient().emit('notification', { method: 'turn/completed', params: {
+      threadId: operation.threadId, turn: { id: operation.nativeTurnId, status: 'completed' } } });
+    assert.equal(eventsOf(events, 'orphanTurnTerminal').length, 1);
+    assert.equal(eventsOf(events, 'operationDone').length, 1);
+
+    // The released FIFO head lets the next operation dispatch immediately.
+    const next = service.send({ input: [{ type: 'text', text: 'after abort' }] });
+    await waitFor(() => [...service.operations.values()][0]?.nativeTurnId);
+    const successor = [...service.operations.values()][0];
+    for (const id of getPeer().pendingAcks.keys()) getPeer().ackPending(id, { turn: { id: successor.nativeTurnId } });
+    getClient().emit('notification', { method: 'turn/completed', params: {
+      threadId: successor.threadId, turn: { id: successor.nativeTurnId, status: 'completed' } } });
+    assert.equal((await next).outcome, 'completed');
   } finally { await service.resetRuntime(); }
 });
 

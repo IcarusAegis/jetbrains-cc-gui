@@ -49,4 +49,3 @@ describe('PermissionsSection', () => {
     expect((screen.getByDisplayValue('workspace-write') as HTMLInputElement).checked).toBe(true);
   });
 });
-

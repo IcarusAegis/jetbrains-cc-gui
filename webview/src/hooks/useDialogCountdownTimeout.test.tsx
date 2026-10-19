@@ -51,6 +51,39 @@ describe('useDialogCountdownTimeout', () => {
     expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 
+  it('re-arms when the timeout decision cannot be sent, so the next interaction retries it', () => {
+    vi.useFakeTimers();
+    // First send is refused (bridge write fails), the retry succeeds.
+    const onTimeout = vi.fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(undefined);
+
+    const { result } = renderHook(() => useDialogCountdownTimeout({
+      isOpen: true,
+      requestKey: 'request-1',
+      timeoutSeconds: 3,
+      onTimeout,
+    }));
+
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+
+    // The dialog stayed open after the refused send: a click must retry the
+    // timeout decision instead of deadlocking on the latched submitted flag.
+    act(() => {
+      expect(result.current.markSubmitted()).toBe(false);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(2);
+
+    // A successful send latches again: no further retries fire.
+    act(() => {
+      expect(result.current.markSubmitted()).toBe(false);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(2);
+  });
+
   it('manual submission suppresses the timeout callback', () => {
     vi.useFakeTimers();
     const onTimeout = vi.fn();

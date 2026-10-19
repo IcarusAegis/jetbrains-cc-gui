@@ -94,4 +94,3 @@ describe('useCodexNativeCatalog', () => {
     expect(result.current.loading).toBe(true);
   });
 });
-

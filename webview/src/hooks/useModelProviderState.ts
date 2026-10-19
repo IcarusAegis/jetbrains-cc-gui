@@ -281,9 +281,13 @@ export function useModelProviderState({ addToast, t }: UseModelProviderStateOpti
           selection: 'danger-full-access',
           source: 'user',
         }));
-      } else if (mode === 'auto' && codexSandboxSelection === 'danger-full-access') {
-        // Auto review rejects a full-access sandbox; keeping the pair would
-        // hard-block every Codex send until the sandbox is changed manually.
+      } else if (codexSandboxSelection === 'danger-full-access' && codexSandboxSource !== 'native') {
+        // Auto review rejects a full-access sandbox, and default/plan no longer
+        // carry bypass semantics — leaving the bypass-installed full-access in
+        // place would silently run without a sandbox while the mode selector
+        // shows a safer mode. Restore the workspace default; a user who truly
+        // wants full access can re-select it in Settings afterwards. A 'native'
+        // selection comes from the user's own Codex config and stays untouched.
         setCodexSandboxSelection('workspace-write');
         setCodexSandboxSource('user');
         sendBridgeEvent('set_codex_sandbox_selection', JSON.stringify({
@@ -317,6 +321,7 @@ export function useModelProviderState({ addToast, t }: UseModelProviderStateOpti
     codexCollaborationMode,
     codexApprovalPreset,
     codexSandboxSelection,
+    codexSandboxSource,
     setCodexPermissionMode,
     setCodexCollaborationMode,
     setCodexApprovalPreset,

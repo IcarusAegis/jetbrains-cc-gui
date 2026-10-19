@@ -117,6 +117,18 @@
     "context": "上下文",
     "usage": "上下文",
     "usagePercentage": "上下文: {{percentage}}",
+    "planUsage": {
+      "title": "Claude 额度详情",
+      "loading": "正在获取额度…",
+      "unavailable": "额度暂不可用",
+      "dash": "额度 —",
+      "tooltipWindow": "{{period}} · 已使用 {{percent}}",
+      "tooltipReset": "重置时间：{{value}}（本地时间）",
+      "clickToSwitch": "点击周期标签切换额度窗口",
+      "worstHint": "圆点表示消耗节奏最紧张的窗口（{{color}}）",
+      "paceColors": { "green": "绿色", "yellow": "黄色", "red": "红色", "neutral": "未知" },
+      "stale": "刷新失败，当前展示的额度可能已过期"
+    },
     "noMatchingFiles": "无匹配文件",
     "noMatchingCommands": "无匹配命令",
     "noMatchingHistory": "无匹配历史",
@@ -832,8 +844,8 @@
       "installPolicyTip": "安装遇到问题？可将报错复制给终端CLI AI 解决",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Claude AI 功能所需。包含 Claude Code SDK 及相关依赖。",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Codex AI 功能所需。在 CLI 页面检测已安装的官方 Codex CLI（@openai/codex），聊天通过 app-server 运行。",
+      "codexMigratedTitle": "Codex 已迁移到「供应商管理 → CLI」",
+      "codexMigratedDesc": "Codex 不再从这里安装 SDK，改为直接使用你电脑上已装好的 Codex CLI（@openai/codex），聊天通过官方 app-server 运行。请在「供应商管理 → CLI」查看检测状态；如果还没安装，先在终端执行 npm install -g @openai/codex，再回到该页点「重新检测」。",
       "loading": "正在加载依赖状态...",
       "install": "安装",
       "installing": "安装中...",
@@ -2670,10 +2682,9 @@
       "reason": "插件使用本机识别到的 Codex CLI 启动 codex app-server。安装了一半的副本（例如全局 npm 安装缺少平台二进制）会以退出码 1 直接退出，并让这一轮对话一起失败。",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "方案一：删除损坏的安装并重装官方 CLI",
-          "step0": "1. 先卸载残留的全局安装（最常见的原因是机器上存在两份副本）：",
-          "step1": "2. 重新安装官方 CLI，请使用 npm 官方源而不是镜像源：",
-          "step2": "3. 确认 CLI 能正常输出版本后再重新发送："
+          "title": "方案一：按官方说明安装或更新 CLI",
+          "step0": "1. 打开官方说明，选择适合当前运行环境的独立安装器、npm 或 Homebrew。更新时沿用原安装渠道，不要直接对独立安装版执行 npm 卸载：",
+          "step1": "2. 在新终端中确认 CLI 能正常输出版本，回到供应商管理 → CLI 刷新后再重新发送："
         },
         "pointCodexBin": {
           "title": "方案二：让插件指向可用的二进制",

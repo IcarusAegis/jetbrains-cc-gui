@@ -207,16 +207,62 @@ public class ClipboardHandlerTest {
         assertTrue(handler.offerImagePaste(image()));
     }
 
-    /** A window with no active input must not retain native images awaiting a nonexistent owner. */
+    /** A gesture made before the input mounts is queued and delivered once its draft registers. */
     @Test
-    public void noPublishedDraftRejectsNativeOffers() {
+    public void noPublishedDraftQueuesTheOfferForTheNextScope() throws Exception {
         Fixture fixture = new Fixture();
         ClipboardHandler handler = new ClipboardHandler(fixture.context, fixture.edtTasks::add,
                 fixture.backgroundTasks::add, ClipboardHandlerTest::image, fixture::expireLater);
-        assertTrue(!handler.offerImagePaste(image()));
+        assertTrue(handler.offerImagePaste(image()));
+        // Queued, not offered: no offer event yet, but an expiry bounds the wait.
+        assertTrue(fixture.callback.scripts.isEmpty());
+        assertEquals(1, fixture.expirationTasks.size());
+        assertTrue(fixture.edtTasks.isEmpty());
+        // The hook read still refuses to capture without an owning draft.
         handler.captureClipboardPaste();
         assertTrue(fixture.edtTasks.isEmpty());
+
+        handler.handle("paste_image_scope", "draft-a");
+        assertEquals(1, fixture.callback.scripts.size());
+        String snapshotId = snapshotId(fixture.callback.scripts.get(0));
+        assertTrue(fixture.callback.scripts.get(0).contains("scopeId: \"draft-a\""));
+        // The queue's own expiry was cancelled; the delivered offer armed a fresh one.
+        assertEquals(1, fixture.expirationTasks.size());
+
+        fixture.callback.scripts.clear();
+        handler.handle("paste_image", "{\"requestId\":\"queued\",\"snapshotId\":\"" + snapshotId + "\",\"scopeId\":\"draft-a\"}");
+        fixture.backgroundTasks.remove().run();
+        assertPastedImage(fixture.callback.scripts, image());
+    }
+
+    /** Only the latest pre-scope gesture is kept; a replaced image frees its slot and expiry. */
+    @Test
+    public void queuedOfferKeepsOnlyTheLatestGesture() {
+        Fixture fixture = new Fixture();
+        ClipboardHandler handler = new ClipboardHandler(fixture.context, fixture.edtTasks::add,
+                fixture.backgroundTasks::add, ClipboardHandlerTest::image, fixture::expireLater);
+        assertTrue(handler.offerImagePaste(image()));
+        assertTrue(handler.offerImagePaste(image()));
+        // The first gesture was replaced: only the second expiry and slot remain.
+        assertEquals(1, fixture.expirationTasks.size());
+        handler.handle("paste_image_scope", "draft-a");
+        assertEquals(1, fixture.callback.scripts.size());
+        assertTrue(fixture.callback.scripts.get(0).contains("scopeId: \"draft-a\""));
+    }
+
+    /** A queued gesture whose expiry fires before any scope registers frees its slot. */
+    @Test
+    public void queuedOfferExpiresWithoutAScope() {
+        Fixture fixture = new Fixture();
+        ClipboardHandler handler = new ClipboardHandler(fixture.context, fixture.edtTasks::add,
+                fixture.backgroundTasks::add, ClipboardHandlerTest::image, fixture::expireLater);
+        assertTrue(handler.offerImagePaste(image()));
+        fixture.expirationTasks.remove().run();
         assertTrue(fixture.expirationTasks.isEmpty());
+        handler.handle("paste_image_scope", "draft-a");
+        // Nothing left to deliver, and the freed slot admits a fresh gesture.
+        assertTrue(fixture.callback.scripts.isEmpty());
+        assertTrue(handler.offerImagePaste(image()));
     }
 
     /** A claim cannot attach a snapshot to a different draft even if its opaque snapshot id is known. */
@@ -244,8 +290,11 @@ public class ClipboardHandlerTest {
         assertTrue(fixture.callback.scripts.get(0).contains("scopeId: \"draft-a\""));
         handler.handle("paste_image_scope", "");
         assertTrue(fixture.expirationTasks.isEmpty());
-        assertTrue(!handler.offerImagePaste(image()));
+        // With the input retired the next gesture queues again, bounded by its own expiry.
+        assertTrue(handler.offerImagePaste(image()));
+        assertEquals(1, fixture.expirationTasks.size());
         handler.dispose();
+        assertTrue(fixture.expirationTasks.isEmpty());
         handler.handle("paste_image_scope", "draft-c");
         assertTrue(!handler.offerImagePaste(image()));
     }

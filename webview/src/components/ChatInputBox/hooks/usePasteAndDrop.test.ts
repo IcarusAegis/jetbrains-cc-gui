@@ -588,6 +588,28 @@ describe('usePasteAndDrop clipboard images', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('stops polling after the retry cap and re-arms on the bridge-ready event', async () => {
+    vi.useFakeTimers();
+    let available = false;
+    const sendToJava = vi.fn((_message: string) => {
+      if (!available) throw new Error('bridge unavailable');
+    });
+    window.sendToJava = sendToJava;
+    setupDraftHook(createEditable());
+    const initialCalls = sendToJava.mock.calls.length;
+    // 1s interval, 30 retries: polling covers half a minute of a missing bridge.
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(sendToJava.mock.calls.length).toBe(initialCalls + 30);
+    // The cap is reached: no more polling while the bridge stays down.
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(sendToJava.mock.calls.length).toBe(initialCalls + 30);
+    // A late bridge still recovers pastes through the ready event.
+    available = true;
+    act(() => window.dispatchEvent(new Event(BRIDGE_READY_EVENT)));
+    expect(sendToJava.mock.calls.length).toBe(initialCalls + 31);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('collapses two identical Java deliveries into one attachment', async () => {
     const editable = createEditable();
     const store = createAttachmentStore();

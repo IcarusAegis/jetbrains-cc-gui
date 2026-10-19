@@ -244,12 +244,13 @@ export const ALLOWED_LOGIN_SHELLS = new Set([
  *
  * @param {string} binaryName
  * @param {string} [shellOverride] - test hook; defaults to allowlisted $SHELL
+ * @param {NodeJS.ProcessEnv} [env] - environment for $SHELL and the child probe
  * @returns {string|null}
  */
-export function whichViaLoginShell(binaryName, shellOverride) {
+export function whichViaLoginShell(binaryName, shellOverride, env = process.env) {
   if (process.platform === 'win32') return null;
   if (!/^[a-z0-9._-]+$/i.test(String(binaryName || ''))) return null;
-  let shell = shellOverride || process.env.SHELL || '';
+  let shell = shellOverride || env.SHELL || '';
   if (!ALLOWED_LOGIN_SHELLS.has(shell)) {
     shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find((candidate) => pathExists(candidate)) || '';
   }
@@ -263,7 +264,7 @@ export function whichViaLoginShell(binaryName, shellOverride) {
     const output = execFileSync(shell, args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: process.env,
+      env,
       timeout: 8000,
     });
     const first = String(output || '')
@@ -277,7 +278,7 @@ export function whichViaLoginShell(binaryName, shellOverride) {
   }
 }
 
-function whichOnPath(binaryName) {
+function whichOnPath(binaryName, env = process.env) {
   try {
     if (process.platform === 'win32') {
       // Prefer execFile so the binary name is not re-parsed by a shell.
@@ -288,7 +289,7 @@ function whichOnPath(binaryName) {
         output = execFileSync('where.exe', [binaryName], {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
-          env: process.env,
+          env,
           windowsHide: true,
         });
       } catch {
@@ -296,7 +297,7 @@ function whichOnPath(binaryName) {
         output = execSync(`where ${binaryName}`, {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
-          env: process.env,
+          env,
           windowsHide: true,
         });
       }
@@ -307,7 +308,7 @@ function whichOnPath(binaryName) {
     const output = execFileSync('which', [binaryName], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: process.env,
+      env,
     });
     const first = String(output || '')
       .split(/\r?\n/)
@@ -336,9 +337,10 @@ function candidateExeNames(binaryName) {
  * not hide a later, working one (`which -a` / `where` list both).
  *
  * @param {string} binaryName
+ * @param {NodeJS.ProcessEnv} [env] - environment whose PATH drives the lookup
  * @returns {string[]}
  */
-function whichAllOnPath(binaryName) {
+function whichAllOnPath(binaryName, env = process.env) {
   try {
     if (process.platform === 'win32') {
       let output;
@@ -346,14 +348,14 @@ function whichAllOnPath(binaryName) {
         output = execFileSync('where.exe', [binaryName], {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
-          env: process.env,
+          env,
           windowsHide: true,
         });
       } catch {
         output = execSync(`where ${binaryName}`, {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
-          env: process.env,
+          env,
           windowsHide: true,
         });
       }
@@ -367,7 +369,7 @@ function whichAllOnPath(binaryName) {
     const output = execFileSync('which', ['-a', binaryName], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: process.env,
+      env,
     });
     return String(output || '')
       .split(/\r?\n/)
@@ -404,9 +406,12 @@ function candidateIdentity(candidate) {
  * @param {string} options.binaryName
  * @param {string[]} [options.envKeys]
  * @param {string[]} [options.homeCandidates]
+ * @param {NodeJS.ProcessEnv} [options.env] - environment for overrides and PATH
+ *   lookup. Callers resolving on behalf of an untrusted request must pass a
+ *   pristine snapshot — never the live, possibly injected, process.env.
  * @returns {string[]}
  */
-export function listCliCandidates({ binaryName, envKeys = [], homeCandidates = [] }) {
+export function listCliCandidates({ binaryName, envKeys = [], homeCandidates = [], env = process.env }) {
   const exeNames = candidateExeNames(binaryName);
   const seen = new Set();
   const candidates = [];
@@ -419,12 +424,12 @@ export function listCliCandidates({ binaryName, envKeys = [], homeCandidates = [
     candidates.push(value);
   };
 
-  const envOverride = firstNonEmpty(...envKeys.map((key) => process.env[key]));
+  const envOverride = firstNonEmpty(...envKeys.map((key) => env[key]));
   if (envOverride) {
     push(resolveWindowsSpawnableBin(envOverride));
   }
 
-  for (const fromPath of whichAllOnPath(binaryName)) {
+  for (const fromPath of whichAllOnPath(binaryName, env)) {
     if (pathExists(fromPath)) push(fromPath);
   }
 
@@ -433,21 +438,21 @@ export function listCliCandidates({ binaryName, envKeys = [], homeCandidates = [
     for (const exeName of exeNames) {
       const resolved = template
         .replace('{home}', home)
-        .replace('{localAppData}', process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'))
+        .replace('{localAppData}', env.LOCALAPPDATA || join(home, 'AppData', 'Local'))
         .replace('{bin}', exeName)
         .replace('{name}', binaryName);
       if (pathExists(resolved)) push(resolveWindowsSpawnableBin(resolved));
     }
   }
 
-  for (const dir of commonCliBinDirs(home)) {
+  for (const dir of commonCliBinDirs(home, env)) {
     for (const exeName of exeNames) {
       const resolved = join(dir, exeName);
       if (pathExists(resolved)) push(resolveWindowsSpawnableBin(resolved));
     }
   }
 
-  const fromShell = whichViaLoginShell(binaryName);
+  const fromShell = whichViaLoginShell(binaryName, undefined, env);
   if (fromShell) push(resolveWindowsSpawnableBin(fromShell));
 
   return candidates;
@@ -459,18 +464,20 @@ export function listCliCandidates({ binaryName, envKeys = [], homeCandidates = [
  * @param {string[]} [options.envKeys] - env var names for path override
  * @param {string[]} [options.homeCandidates] - absolute-ish candidates under $HOME
  *   (use `{home}` placeholder or pass full relative segments)
+ * @param {NodeJS.ProcessEnv} [options.env] - environment for overrides and PATH
+ *   lookup (see listCliCandidates for why callers pass a pristine snapshot)
  * @returns {string}
  */
-export function resolveCliPath({ binaryName, envKeys = [], homeCandidates = [] }) {
+export function resolveCliPath({ binaryName, envKeys = [], homeCandidates = [], env = process.env }) {
   const exeNames = candidateExeNames(binaryName);
 
-  const envOverride = firstNonEmpty(...envKeys.map((key) => process.env[key]));
+  const envOverride = firstNonEmpty(...envKeys.map((key) => env[key]));
   if (envOverride) {
     return resolveWindowsSpawnableBin(envOverride);
   }
 
   // `where <name>` (no extension) honors PATHEXT; we then prefer .cmd/.exe.
-  const fromPath = whichOnPath(binaryName);
+  const fromPath = whichOnPath(binaryName, env);
   if (fromPath) return resolveWindowsSpawnableBin(fromPath);
 
   const home = homedir();
@@ -478,7 +485,7 @@ export function resolveCliPath({ binaryName, envKeys = [], homeCandidates = [] }
     for (const exeName of exeNames) {
       const resolved = template
         .replace('{home}', home)
-        .replace('{localAppData}', process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'))
+        .replace('{localAppData}', env.LOCALAPPDATA || join(home, 'AppData', 'Local'))
         .replace('{bin}', exeName)
         .replace('{name}', binaryName);
       if (pathExists(resolved)) return resolveWindowsSpawnableBin(resolved);
@@ -488,7 +495,7 @@ export function resolveCliPath({ binaryName, envKeys = [], homeCandidates = [] }
   // Version managers (nvm/fnm/mise/asdf) and other well-known bin dirs. This
   // must stay in sync with the spawn PATH enrichment in commonCliBinDirs so a
   // resolved path can actually launch.
-  for (const dir of commonCliBinDirs(home)) {
+  for (const dir of commonCliBinDirs(home, env)) {
     for (const exeName of exeNames) {
       const resolved = join(dir, exeName);
       if (pathExists(resolved)) return resolveWindowsSpawnableBin(resolved);
@@ -498,7 +505,7 @@ export function resolveCliPath({ binaryName, envKeys = [], homeCandidates = [] }
   // Last resort: the user's login shell. IDE/daemon processes can run with a
   // minimal PATH, so CLIs installed via nvm/fnm/mise/asdf or custom prefixes
   // only become visible once the login rc files are sourced.
-  const fromShell = whichViaLoginShell(binaryName);
+  const fromShell = whichViaLoginShell(binaryName, undefined, env);
   if (fromShell) return resolveWindowsSpawnableBin(fromShell);
 
   return binaryName;
@@ -630,8 +637,11 @@ function compareVersionNamesDesc(a, b) {
 /**
  * Common user-level CLI install dirs (IDE PATH is often sparse / no login shell).
  * Used both for binary resolution and spawn PATH enrichment.
+ *
+ * @param {string} [home]
+ * @param {NodeJS.ProcessEnv} [env] - source of APPDATA/LOCALAPPDATA/ProgramFiles
  */
-export function commonCliBinDirs(home = homedir()) {
+export function commonCliBinDirs(home = homedir(), env = process.env) {
   const dirs = [];
   if (!home) return dirs;
   dirs.push(
@@ -659,14 +669,14 @@ export function commonCliBinDirs(home = homedir()) {
   dirs.push(...versionManagerBinDirs(home));
   if (process.platform === 'win32') {
     // npm global bin dir on Windows (e.g. C:\Users\<user>\AppData\Roaming\npm).
-    const appData = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+    const appData = env.APPDATA || join(home, 'AppData', 'Roaming');
     dirs.push(join(appData, 'npm'));
     // OMP Windows native installer (e.g. C:\Users\<user>\AppData\Local\omp).
-    const localAppData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    const localAppData = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
     dirs.push(join(localAppData, 'omp'));
-    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const programFiles = env.ProgramFiles || 'C:\\Program Files';
     dirs.push(join(programFiles, 'nodejs'));
-    const programFilesX86 = process.env['ProgramFiles(x86)'];
+    const programFilesX86 = env['ProgramFiles(x86)'];
     if (programFilesX86) dirs.push(join(programFilesX86, 'nodejs'));
   }
   return dirs;

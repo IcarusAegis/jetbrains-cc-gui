@@ -15,20 +15,38 @@
  */
 
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { listCliCandidates, resolveCliPath, stripOuterQuotes } from '../../utils/cli-path.js';
 
 export const CODEX_CLI_ENV_KEYS = ['CODEX_BIN', 'CODEX_PATH', 'CODEX_CLI_PATH'];
 
-/** Home install locations of the official CLI / npm global prefix. */
-const CODEX_HOME_CANDIDATES = [
-  '{home}/.local/bin/{bin}', '{home}/.cargo/bin/{bin}',
-  '{home}/.codex/bin/{bin}',
-];
+/** Mirrors the official standalone installer layout, covering entries the GUI process may not see on PATH. */
+export function codexHomeCandidates({ home = homedir(), platform = process.platform, env = process.env } = {}) {
+  const dirs = [];
+  const installDir = env.CODEX_INSTALL_DIR?.trim();
+  if (installDir) dirs.push(installDir);
+  if (platform === 'win32') {
+    const localAppData = env.LOCALAPPDATA?.trim() || join(home, 'AppData', 'Local');
+    dirs.push(join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin'));
+  }
+  dirs.push(join(home, '.local', 'bin'));
+  const codexHome = env.CODEX_HOME?.trim() || join(home, '.codex');
+  const current = join(codexHome, 'packages', 'standalone', 'current');
+  // Follow only the version the installer selected; older standalone packages
+  // place the binary directly under current.
+  dirs.push(join(current, 'bin'), current, join(home, '.cargo', 'bin'), join(home, '.codex', 'bin'));
+  return dirs.map((dir) => join(dir, '{bin}'));
+}
 
-/** Uses the same PATH, home and login-shell discovery as OpenCode. */
-export function discoverCodexCli() {
-  const path = resolveCliPath({ binaryName: 'codex', homeCandidates: CODEX_HOME_CANDIDATES });
+/** Env overrides first, then PATH, installer locations and the login shell. */
+export function discoverCodexCli({ env = process.env } = {}) {
+  const path = resolveCliPath({
+    binaryName: 'codex',
+    envKeys: CODEX_CLI_ENV_KEYS,
+    homeCandidates: codexHomeCandidates({ env }),
+    env,
+  });
   return path === 'codex' ? null : path;
 }
 
@@ -37,13 +55,18 @@ export function discoverCodexCli() {
  * of them. A machine commonly has several installs (version managers, npm
  * prefixes, a manual download) and only some of them are complete.
  *
+ * @param {object} [opts]
+ * @param {NodeJS.ProcessEnv} [opts.env] - environment for overrides and PATH
+ *   lookup. Request handlers must pass the pristine startup snapshot: the live
+ *   process.env can carry an injected PATH pointing at a malicious `codex`.
  * @returns {string[]}
  */
-export function discoverCodexCliCandidates() {
+export function discoverCodexCliCandidates({ env = process.env } = {}) {
   return listCliCandidates({
     binaryName: 'codex',
     envKeys: CODEX_CLI_ENV_KEYS,
-    homeCandidates: CODEX_HOME_CANDIDATES,
+    homeCandidates: codexHomeCandidates({ env }),
+    env,
   });
 }
 
@@ -263,7 +286,9 @@ export function resolveManagedCodexCli(
  * @param {string} [opts.platform] override for tests
  * @param {string} [opts.arch] override for tests
  * @param {string} [opts.nodePath] node executable for the companion launcher
- * @param {object} [opts.env] environment for the CODEX_* path override
+ * @param {object} [opts.env] environment for the CODEX_* path override **and**
+ *   PATH/home discovery — pass the pristine startup snapshot, never the live
+ *   request-mutated process.env
  * @param {() => string[]} [opts.discoverCliCandidates] test hook: every external candidate
  * @param {() => string|null} [opts.discoverCli] test hook: a single external candidate
  * @returns {object} resolution result with status resolved|unresolved, the chosen
@@ -311,7 +336,7 @@ export function resolveCodexCli({
 
   const discovered = discoverCliCandidates
     ? discoverCliCandidates()
-    : discoverCli ? [discoverCli()].filter(Boolean) : discoverCodexCliCandidates();
+    : discoverCli ? [discoverCli()].filter(Boolean) : discoverCodexCliCandidates({ env });
   const candidates = [];
   // Installs that only *look* incomplete keep a low-priority slot behind every
   // confirmed candidate: a heuristic must never take away a working CLI.

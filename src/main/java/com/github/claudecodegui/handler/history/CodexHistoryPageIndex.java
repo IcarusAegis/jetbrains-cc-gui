@@ -72,11 +72,14 @@ final class CodexHistoryPageIndex implements AutoCloseable {
             entry = new Entry();
             entries.put(source, entry);
         }
+        boolean indexingStarted = false;
+        boolean indexingFinished = false;
         try {
             int parsed = 0;
             long start = entry.snapshot == null ? 0 : entry.snapshot.size;
             long readBytes = snapshot.size - start;
             if (entry.snapshot == null || !entry.snapshot.equals(snapshot)) {
+                indexingStarted = true;
                 Entry target = entry;
                 Entry.SourceCapture capture = entry.new SourceCapture(snapshot, active);
                 parsed = reader.forEachSessionMessage(sessionId, source, start, snapshot.size, active, raw -> {
@@ -94,6 +97,7 @@ final class CodexHistoryPageIndex implements AutoCloseable {
                     throw new IOException("Codex history changed while indexing; retry the page");
                 }
                 capture.finish();
+                indexingFinished = true;
             }
             HistoryMessageInjector.CodexHistoryPage page = entry.page(beforeTurn, pageSize, active);
             page.rawRecordCount = parsed;
@@ -110,7 +114,14 @@ final class CodexHistoryPageIndex implements AutoCloseable {
             }
             return page;
         } catch (IOException | RuntimeException exception) {
-            remove(source);
+            // A cancelled stale request only proves its own observer went away.
+            // Evict solely when indexing was interrupted mid-capture (the entry
+            // holds partial accumulator state and truncated fingerprint blocks);
+            // a fully indexed entry stays valid for the next, current request.
+            boolean halfIndexed = indexingStarted && !indexingFinished;
+            if (!(exception instanceof CancellationException) || halfIndexed) {
+                remove(source);
+            }
             throw exception;
         }
     }

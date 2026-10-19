@@ -103,17 +103,17 @@ STOPPED → STARTING → INITIALIZING → READY → DRAINING → STOPPED
 
 ## 运行方式与 CLI 识别
 
-Codex 与 OpenCode 共用「提供商管理 → CLI」的识别列表，展示本机 CLI 的路径、版本和手动安装指引。SDK 页面及 SDK 安装、版本、更新、卸载 API 不再管理 Codex，聊天也不再依赖 `codex-sdk` 安装状态。可手动安装官方 CLI（`npm install -g @openai/codex`），再刷新 CLI 页面。
+Codex 与 OpenCode 共用「提供商管理 → CLI」的识别列表，展示本机 CLI 的路径、版本和手动安装指引。SDK 页面及 SDK 安装、版本、更新、卸载 API 不再管理 Codex，聊天也不再依赖 `codex-sdk` 安装状态。优先使用[官方独立安装器](https://learn.chatgpt.com/docs/codex/cli#getting-started)，npm / Homebrew 仍可选；安装与更新步骤见 [Codex CLI 安装与识别](./README.md)，安装后刷新 CLI 页面。
 
-显式路径或 `CODEX_BIN` / `CODEX_PATH` / `CODEX_CLI_PATH` 优先，其次查找 PATH、常用安装位置和登录 shell。失效的显式覆盖会报错。只有没有外部 CLI 时才兼容查找旧 `~/.codemoss/dependencies/codex-sdk/` 中的既有 CLI binary/launcher；不创建安装标记、不修改或删除该目录。只有 SDK metadata 的旧目录不算 CLI 可用。Windows npm `.cmd` 使用现有 CLI spawn adapter 启动；不扫描 Codex 桌面应用 bundle。
+显式路径或 `CODEX_BIN` / `CODEX_PATH` / `CODEX_CLI_PATH` 优先，其次查找 PATH、常用安装位置和登录 shell。Java 检测与 Node 发现同时覆盖 `CODEX_INSTALL_DIR`、Unix `~/.local/bin`、Windows `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`，以及 `${CODEX_HOME:-~/.codex}/packages/standalone/current/bin` 和旧式 `current` 平铺布局；不遍历未选中的 `releases/`。失效的显式覆盖会报错。只有没有外部 CLI 时才兼容查找旧 `~/.codemoss/dependencies/codex-sdk/` 中的既有 CLI binary/launcher；不创建安装标记、不修改或删除该目录。只有 SDK metadata 的旧目录不算 CLI 可用。Windows npm `.cmd` 使用现有 CLI spawn adapter 启动；不扫描 Codex 桌面应用 bundle。
 
 **多候选与启动回退**：同一台机器常同时存在多份 codex（版本管理器、npm 全局前缀、手动下载）。发现阶段不再只取第一个命中项，而是按「显式/env 覆盖 → PATH 全部命中 → home 候选目录 → 常用 bin 目录 → 登录 shell」列出全部候选，并按真实路径去重（符号链接归一）。每个候选只做文件系统判定，不 spawn 任何进程（CLI 页面仍然独占版本探测）：`bin/codex.js` npm 启动器会在其所在 `@openai/codex` 包（含嵌套与提升布局）内查找平台二进制；缺失时该安装被判定为「未确认」，降到最后一位作为保底，既不抢占后面可确认可用的安装，也不会因为启发式漏判而彻底拿掉用户本来可用的 CLI。完全不能作为 CLI 的路径（不存在、非文件）直接丢弃并给出原因。
 
 解析结果同时返回 `candidates`（按优先级的可用候选，末尾为未确认保底项）与 `rejected`（完全不可用项及原因）。运行时的 `startupAttempts` 等于候选数：某个候选在 READY 之前退出（启动器 ENOENT、初始化失败、握手超时）时，服务在**未派发任何 RPC** 的前提下关闭该 generation、切到下一个候选重试，并发出 `runtimeFallback` 事件；只有全部候选失败才按失败收尾。READY 之后的退出绝不重试（不重放未知工作）。
 
-**失败诊断**：客户端保留最近若干行已脱敏 stderr，并在 READY 之前退出时把「启动失败标记 + 启动命令 + stderr 尾部」挂在 `err.details` 上（`err.message` 仍是规范文本 `codex app-server exited (code=…, signal=…)`，历史回退等既有匹配者不受影响）。runtime 失败文案在保留该规范前缀之外，追加每个候选 CLI 的尝试结果与一句可操作提示，前端按 `codexCliUnavailable` 诊断模式给出重装/改 `CODEX_BIN` 的步骤；`CodexNativeHistoryReader.permitsOfflineFallback` 对退出行采用前缀容忍匹配，带诊断后缀时仍允许只读历史回退。
+**失败诊断**：客户端保留最近若干行已脱敏 stderr，并在 READY 之前退出时把「启动失败标记 + 启动命令 + stderr 尾部」挂在 `err.details` 上（`err.message` 仍是规范文本 `codex app-server exited (code=…, signal=…)`，历史回退等既有匹配者不受影响）。runtime 失败文案在保留该规范前缀之外，追加每个候选 CLI 的尝试结果与一句可操作提示，前端按 `codexCliUnavailable` 诊断模式链接官方分平台安装/更新说明，并提供改 `CODEX_BIN` 的步骤，不要求独立安装用户先卸载 npm 包；`CodexNativeHistoryReader.permitsOfflineFallback` 对退出行采用前缀容忍匹配，带诊断后缀时仍允许只读历史回退。
 
-CLI 页面仅运行版本探测，不读取 config/auth、不启动 app-server；原生聊天与目录访问仍遵守运行方式授权。Node system-status 保留 `codex` 消费合同并报告实际 CLI 命令路径；它不是 SDK 管理入口。
+CLI 页面仅运行 `--version`，成功退出且输出包含 `codex-cli <版本>` 才确认安装；前置警告不会覆盖版本，不再将探测失败的可执行文件标记为已安装。检测不读取 config/auth、不启动 app-server；原生聊天与目录访问仍遵守运行方式授权。Node system-status 保留 `codex` 消费合同并报告实际 CLI 命令路径；它不是 SDK 管理入口。
 
 运行方式（`getCodexRuntimeState()`）与 app-server child 的关系：
 

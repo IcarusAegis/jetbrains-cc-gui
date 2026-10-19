@@ -265,6 +265,11 @@ function getFileIconSvg(fileName: string): string {
   return getFileIcon(extension ?? '', fileName);
 }
 
+/** Stable row identity across re-parses: one tool can patch several files. */
+function previewKeyOf(item: EditItem): string {
+  return `${item.toolId ?? ''}:${item.filePath}`;
+}
+
 interface EditFileItemProps {
   item: EditItem;
   onFileClick: (item: EditItem, e: React.MouseEvent) => void;
@@ -346,7 +351,9 @@ const EditFileItem = ({ item, onFileClick, onShowDiff, onRefresh, t, previewExpa
 
 const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
   const { expanded, toggleExpanded } = usePreferredExpanded(editGroupCollapsePreference);
-  const [previewItem, setPreviewItem] = useState<EditItem | null>(null);
+  // Track a stable row key, not the parsed object: every streaming update
+  // rebuilds the EditItem objects, so an identity-based preview closes itself.
+  const [previewKey, setPreviewKey] = useState<string | null>(null);
   const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement>(null);
   const prevItemCountRef = useRef(0);
@@ -377,15 +384,19 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
   // Calculate totals
   const totalAdditions = editItems.reduce((sum, item) => sum + item.additions, 0);
   const totalDeletions = editItems.reduce((sum, item) => sum + item.deletions, 0);
-  const completedCount = editItems.filter(item => item.isCompleted).length;
   // Match EditFileItem's error semantics: a denied tool counts as failed.
-  const errorCount = editItems.filter(item => item.isError
-    || (item.toolId ? window.__deniedToolIds?.has(item.toolId) ?? false : false)).length;
+  const isItemDenied = (item: EditItem) => item.toolId
+    ? window.__deniedToolIds?.has(item.toolId) ?? false
+    : false;
+  // A denied row is terminal (the user rejected it): count it as settled so the
+  // header progress does not stick below total forever.
+  const completedCount = editItems.filter(item => item.isCompleted || isItemDenied(item)).length;
+  const errorCount = editItems.filter(item => item.isError || isItemDenied(item)).length;
   const allSucceeded = completedCount === editItems.length && errorCount === 0
     && editItems.every(item => !item.isUnknown);
 
   // Calculate list height
-  const needsScroll = editItems.length > MAX_VISIBLE_ITEMS || previewItem !== null;
+  const needsScroll = editItems.length > MAX_VISIBLE_ITEMS || previewKey !== null;
   const listHeight = needsScroll
     ? MAX_VISIBLE_ITEMS * ITEM_HEIGHT
     : editItems.length * ITEM_HEIGHT;
@@ -413,9 +424,10 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
   const handleShowDiff = (item: EditItem, e: React.MouseEvent) => {
     e.stopPropagation();
     if (item.diff) {
-      // Track the item itself: an index drifts when native snapshots insert
-      // or reorder rows while a preview is open.
-      setPreviewItem(previous => previous === item ? null : item);
+      // Track the row key: an index drifts when native snapshots insert or
+      // reorder rows, and the item object itself is rebuilt on every update.
+      const key = previewKeyOf(item);
+      setPreviewKey(previous => previous === key ? null : key);
       return;
     }
     showDiff(item.openPath, item.oldString, item.newString, t('tools.editPrefix', { fileName: item.fileName }));
@@ -494,7 +506,7 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
               onShowDiff={handleShowDiff}
               onRefresh={handleRefresh}
               t={t}
-              previewExpanded={previewItem === item}
+              previewExpanded={previewKey === previewKeyOf(item)}
             />
           ))}
         </div>

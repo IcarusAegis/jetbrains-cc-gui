@@ -412,8 +412,8 @@
       "installPolicyTip": "インストールに問題がある場合、エラーをターミナルCLI AIにコピーして解決できます",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Claude AI機能に必要です。Claude Code SDKと関連依存関係が含まれます。",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Codex AI 機能に必要です。CLI ページでインストール済みの公式 Codex CLI（@openai/codex）を検出し、チャットは app-server 経由で実行します。",
+      "codexMigratedTitle": "Codex は「プロバイダー管理 → CLI」に移動しました",
+      "codexMigratedDesc": "Codex はここで SDK をインストールする必要がなくなり、お使いのマシンにインストール済みの Codex CLI（@openai/codex）を直接使います。チャットは公式の app-server 経由で実行されます。「プロバイダー管理 → CLI」で検出状態を確認してください。未インストールの場合はターミナルで npm install -g @openai/codex を実行し、そのページで Re-check を押してください。",
       "loading": "依存関係の状態を読み込み中...",
       "install": "インストール",
       "installing": "インストール中...",
@@ -2058,10 +2058,9 @@
       "reason": "プラグインはマシン上で検出した Codex CLI から codex app-server を起動します。インストールが中途半端なコピー（例：グローバル npm インストールでプラットフォーム用バイナリが欠落）は終了コード 1 で終了し、そのターンも失敗します。",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "方法 1：壊れたインストールを削除して公式 CLI を再インストール",
-          "step0": "1. まず残留したグローバルインストールを削除します（コピーが 2 つあるのが最も一般的な原因です）：",
-          "step1": "2. 公式 CLI を再インストールします（ミラーではなく公式 npm レジストリを使用してください）：",
-          "step2": "3. CLI がバージョンを返すことを確認してから再送信してください："
+          "title": "方法 1：公式の手順に従って CLI をインストールまたは更新",
+          "step0": "1. 公式の手順を開き、実行環境に合わせてスタンドアロンインストーラー、npm、Homebrew のいずれかを選択します。更新は元のインストール経路で行い、スタンドアロン版に対して npm uninstall を実行しないでください：",
+          "step1": "2. 新しいターミナルでバージョンを確認し、プロバイダー管理 → CLI を更新してから再送信してください："
         },
         "pointCodexBin": {
           "title": "方法 2：動作するバイナリをプラグインに指定する",

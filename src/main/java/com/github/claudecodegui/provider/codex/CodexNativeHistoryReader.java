@@ -37,8 +37,16 @@ public final class CodexNativeHistoryReader {
         params.add("cursor", cursor == null ? JsonNull.INSTANCE : cursor.deepCopy());
         params.addProperty("limit", limit);
         params.addProperty("readMode", this.readMode);
-        JsonObject response = this.bridge.readCodexNative("codex.readHistoryPage", this.channelId,
-                this.cwd, this.threadId, params).get(125, TimeUnit.SECONDS);
+        JsonObject response;
+        try {
+            response = this.bridge.readCodexNative("codex.readHistoryPage", this.channelId,
+                    this.cwd, this.threadId, params).get(125, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException timeout) {
+            // TimeoutException carries a null message; give the failure text the
+            // offline-fallback classifier can match so a wedged app-server
+            // degrades to the legacy read-only rollout instead of an error.
+            throw new IllegalStateException("Native Codex history read timed out", timeout);
+        }
         if (response == null || response.has("error")) {
             throw new IllegalStateException(response == null ? "Native Codex history returned no response"
                     : response.get("error").getAsString());
@@ -63,6 +71,12 @@ public final class CodexNativeHistoryReader {
         return text.contains("runtime access is inactive") || text.contains("daemon is unavailable")
                 || text.contains("cli not found") || text.contains("no codex cli")
                 || text.contains("app-server child exited") || text.contains("app-server client closed")
+                // A wedged app-server answers a read-only page request with a
+                // timeout ("Native Codex history read timed out" locally, or
+                // "java.util.concurrent.TimeoutException" from the executor);
+                // the on-disk rollout stays readable, so degrade like any
+                // other unavailable transport.
+                || text.contains("timed out") || text.contains("timeoutexception")
                 // Prefix-tolerant: the runtime layer appends per-CLI diagnostics
                 // (and a "codex runtime failure: " prefix) to the same exit line,
                 // and a transport outage must keep the legacy read-only fallback

@@ -422,8 +422,8 @@ export class CodexAppServerService extends EventEmitter {
       base,
       '',
       ...details,
-      '- Codex CLI check: run "codex --version"; reinstall the CLI with'
-        + ' "npm install -g @openai/codex@latest" after removing a stale global install,'
+      '- Codex CLI check: run "codex --version"; install or update the CLI using'
+        + ' https://learn.chatgpt.com/docs/codex/cli#getting-started,'
         + ' or point CODEX_BIN at a working binary (Settings > Provider Management > CLI).',
     ].join('\n');
   }
@@ -1323,6 +1323,23 @@ export class CodexAppServerService extends EventEmitter {
       clientOperationId: operation?.clientOperationId ?? null,
       payload: {},
     }));
+    // turn/aborted is a native terminal. A bound operation whose server never
+    // follows up with turn/completed would otherwise wait forever (the
+    // uncertainty watch stays disarmed once a turn identity is known),
+    // stalling the FIFO queue and pinning the thread in 'running'. Settlement
+    // is idempotent: a turn that also reports turn/completed simply settles on
+    // whichever terminal arrives first.
+    const thread = this.threads.get(threadId);
+    if (thread) {
+      thread.state = 'idle';
+    }
+    if (turnId) {
+      this.completedTurns.add(`${threadId}:${turnId}`);
+      if (this.completedTurns.size > 2048) this.completedTurns.delete(this.completedTurns.values().next().value);
+    }
+    if (operation && !operation.settled) {
+      this.#settleOperation(operation, { outcome: 'interrupted' });
+    }
   }
 
   #handleItemEvent(method, params) {

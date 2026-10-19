@@ -412,8 +412,8 @@
       "installPolicyTip": "설치 문제가 있으시면 오류를 터미널 CLI AI에 복사하여 해결하세요",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Claude AI 기능에 필요합니다. Claude Code SDK 및 관련 의존성을 포함합니다.",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Codex AI 기능에 필요합니다. CLI 페이지에서 설치된 공식 Codex CLI(@openai/codex)를 감지하며 채팅은 app-server를 통해 실행됩니다.",
+      "codexMigratedTitle": "Codex가 '제공자 관리 → CLI'로 이동했습니다",
+      "codexMigratedDesc": "Codex는 이제 여기서 SDK를 설치하지 않습니다. 이미 설치된 Codex CLI(@openai/codex)를 그대로 사용하며 채팅은 공식 app-server를 통해 실행됩니다. '제공자 관리 → CLI'에서 감지 상태를 확인하세요. 아직 설치되어 있지 않다면 터미널에서 npm install -g @openai/codex를 실행한 뒤 해당 페이지에서 Re-check를 누르세요.",
       "loading": "의존성 상태 로딩 중...",
       "install": "설치",
       "installing": "설치 중...",
@@ -2145,10 +2145,9 @@
       "reason": "플러그인은 컴퓨터에서 찾은 Codex CLI로 codex app-server를 시작합니다. 절반만 설치된 복사본(예: 플랫폼 바이너리가 없는 전역 npm 설치)은 종료 코드 1로 종료되며 해당 턴도 함께 실패합니다.",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "방법 1: 손상된 설치를 제거하고 공식 CLI 재설치",
-          "step0": "1. 먼저 남아 있는 전역 설치를 제거하세요(복사본이 두 개인 경우가 가장 흔한 원인입니다):",
-          "step1": "2. 공식 CLI를 다시 설치하세요(미러가 아닌 공식 npm 레지스트리를 사용하세요):",
-          "step2": "3. CLI가 버전을 출력하는지 확인한 뒤 다시 보내세요:"
+          "title": "방법 1: 공식 안내에 따라 CLI 설치 또는 업데이트",
+          "step0": "1. 공식 안내를 열고 실행 환경에 맞게 독립 설치 관리자, npm 또는 Homebrew를 선택하세요. 업데이트는 원래 설치 경로로 진행하고, 독립 설치 버전에 npm uninstall을 실행하지 마세요:",
+          "step1": "2. 새 터미널에서 버전을 확인하고, 제공자 관리 → CLI를 새로 고친 뒤 다시 보내세요:"
         },
         "pointCodexBin": {
           "title": "방법 2: 동작하는 바이너리를 플러그인에 지정",

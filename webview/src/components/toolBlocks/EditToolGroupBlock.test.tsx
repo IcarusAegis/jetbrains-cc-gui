@@ -87,6 +87,37 @@ describe('shared edit batches', () => {
     expect(screen.getByText('File Change')).toBeTruthy();
     expect(container.querySelectorAll('.tool-status-indicator.completed')).toHaveLength(1);
   });
+
+  it('keeps the inline diff preview open when streaming rebuilds the item objects', () => {
+    const makeItems = (): ComponentProps<typeof EditToolGroupBlock>['items'] => [
+      { name: 'apply_patch', input: { patch }, result: success, toolId: 'patch' },
+    ];
+    const { container, rerender } = render(<EditToolGroupBlock items={makeItems()} />);
+    fireEvent.click(container.querySelectorAll('.file-list-item')[1].querySelector('button')!);
+    expect(screen.getByText('old line')).toBeTruthy();
+    expect(screen.getByText('new line')).toBeTruthy();
+    // A streaming update re-parses the batch: new array, new item identities.
+    rerender(<EditToolGroupBlock items={makeItems()} />);
+    expect(screen.getByText('old line')).toBeTruthy();
+    expect(screen.getByText('new line')).toBeTruthy();
+  });
+
+  it('counts denied rows as settled in the header progress', () => {
+    window.__deniedToolIds = new Set(['denied-tool']);
+    try {
+      const { getByRole } = render(<EditToolGroupBlock items={[
+        { name: 'apply_patch', input: { patch }, result: success, toolId: 'done' },
+        { name: 'Edit', input: { file_path: 'c.ts', old_string: 'old c', new_string: 'new c' }, toolId: 'denied-tool' },
+      ]} />);
+      // 3 rows: two patch files completed + the denied edit must not pin the
+      // progress below total forever, while still reporting the failure.
+      expect(getByRole('status').textContent).toContain('3/3 finished');
+      expect(getByRole('status').textContent).toContain('Failed: 1');
+      expect(getByRole('status').textContent).not.toContain('tools.editGroupAllCompleted');
+    } finally {
+      delete window.__deniedToolIds;
+    }
+  });
 });
 
 const items: ComponentProps<typeof EditToolGroupBlock>['items'] = [

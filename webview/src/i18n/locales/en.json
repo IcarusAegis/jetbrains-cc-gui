@@ -119,6 +119,18 @@
     "context": "Context",
     "usage": "Usage",
     "usagePercentage": "Usage: {{percentage}}",
+    "planUsage": {
+      "title": "Claude plan usage",
+      "loading": "Loading usage…",
+      "unavailable": "Usage unavailable",
+      "dash": "Usage —",
+      "tooltipWindow": "{{period}} · {{percent}} used",
+      "tooltipReset": "Resets: {{value}} (local time)",
+      "clickToSwitch": "Click period label to switch window",
+      "worstHint": "Dot shows worst window ({{color}})",
+      "paceColors": { "green": "green", "yellow": "yellow", "red": "red", "neutral": "unknown" },
+      "stale": "Data may be outdated (refresh failed)"
+    },
     "noMatchingFiles": "No matching files",
     "noMatchingCommands": "No matching commands",
     "noMatchingHistory": "No matching history",
@@ -834,8 +846,8 @@
       "installPolicyTip": "Installation issues? Copy the error to a terminal CLI AI to resolve",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Required for Claude AI features. Includes Claude Code SDK and related dependencies.",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Required for Codex AI features. Detect the installed official Codex CLI (@openai/codex) on the CLI page; chat runs through app-server.",
+      "codexMigratedTitle": "Codex has moved to Provider Management → CLI",
+      "codexMigratedDesc": "Codex no longer installs an SDK here. It uses the Codex CLI already installed on your machine (@openai/codex), and chat runs through the official app-server. Check its status under Provider Management → CLI; if it is not installed yet, run npm install -g @openai/codex in a terminal, then click Re-check there.",
       "loading": "Loading dependency status...",
       "install": "Install",
       "installing": "Installing...",
@@ -2668,10 +2680,9 @@
       "reason": "The plugin starts \"codex app-server\" from the Codex CLI found on your machine. A half-installed copy - for example a global npm install whose platform binary is missing - exits with code 1 and takes the turn down with it.",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "Option 1: Remove the broken install and reinstall the official CLI",
-          "step0": "1. Remove the stale global install (having two copies is the most common cause):",
-          "step1": "2. Install the official CLI again, from the official npm registry rather than a mirror:",
-          "step2": "3. Check that the CLI answers before sending again:"
+          "title": "Option 1: Install or update the CLI using the official instructions",
+          "step0": "1. Open the official instructions and choose the standalone installer, npm, or Homebrew for your runtime environment. Update through the original installation channel; do not use npm uninstall for a standalone installation:",
+          "step1": "2. Check the version in a new terminal, refresh Provider Management → CLI, then send again:"
         },
         "pointCodexBin": {
           "title": "Option 2: Point the plugin at a working binary",

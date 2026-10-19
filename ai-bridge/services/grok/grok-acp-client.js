@@ -275,12 +275,15 @@ export class GrokAcpClient {
     if (this.proc) return;
 
     const bin = resolveGrokBinary();
-    const launch = resolveGrokAgentLaunch(bin);
+    const launch = resolveGrokAgentLaunch(bin, process.platform, this.env);
     this.proc = spawn(launch.file, launch.args, {
       cwd: this.cwd,
       env: this.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(launch.windowsHide ? { windowsHide: true } : {}),
+      // `.cmd`/`.bat` shims carry their own spawn contract (shell: false,
+      // windowsVerbatimArguments, PATH-prepended env) from resolveCliSpawn.
+      ...(launch.options || {}),
     });
 
     this.activeSessionId = null;

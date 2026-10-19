@@ -172,4 +172,3 @@ export function useCodexNativeCatalog(
     error, loading, mcpServers, models, refresh, reloadMcp, skills, hasPendingRequests,
   ]);
 }
-

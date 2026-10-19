@@ -39,6 +39,14 @@ public class CodexNativeHistoryReaderTest {
         assertTrue(CodexNativeHistoryReader.permitsOfflineFallback("Codex CLI not found"));
     }
 
+    /** A wedged app-server's read timeout degrades to the on-disk rollout like any transport outage. */
+    @Test
+    public void readTimeoutsSelectThePersistedHistoryFallback() {
+        assertTrue(CodexNativeHistoryReader.permitsOfflineFallback("Native Codex history read timed out"));
+        assertTrue(CodexNativeHistoryReader.permitsOfflineFallback("java.util.concurrent.TimeoutException"));
+        assertFalse(CodexNativeHistoryReader.permitsOfflineFallback(null));
+    }
+
     /** Actual child exit diagnostics permit reading persisted history without reopening a writer. */
     @Test
     public void actualNativeExitMessagesSelectOnlyPersistedHistory() {

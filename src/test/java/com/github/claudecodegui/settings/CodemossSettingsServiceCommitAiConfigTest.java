@@ -363,7 +363,7 @@ public class CodemossSettingsServiceCommitAiConfigTest {
                 .resolve("codex");
         Files.createDirectories(vendor);
         Path binary = vendor.resolve("codex");
-        Files.writeString(binary, "#!/bin/sh\nprintf 'codex 0.117.0\\n'\n");
+        Files.writeString(binary, "#!/bin/sh\nprintf 'codex-cli 0.117.0\\n'\n");
         Files.setPosixFilePermissions(binary, PosixFilePermissions.fromString("rwxr-xr-x"));
     }
 

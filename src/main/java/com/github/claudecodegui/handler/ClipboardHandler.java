@@ -55,6 +55,9 @@ public class ClipboardHandler extends BaseMessageHandler {
     private final Function<Runnable, Runnable> expirationScheduler;
     private final Semaphore imageSlots = new Semaphore(MAX_PENDING_IMAGES);
     private final Map<String, ImageOffer> imageOffers = new ConcurrentHashMap<>();
+    private final Object pendingImageLock = new Object();
+    // Guarded by pendingImageLock; holds the latest gesture made before any scope was published.
+    private PendingImage pendingImage;
     private volatile boolean disposed;
     private volatile String imageScopeId;
     private volatile long lastReadTime = 0;
@@ -173,6 +176,7 @@ public class ClipboardHandler extends BaseMessageHandler {
                 this.discardOffer(entry.getKey());
             }
         }
+        this.flushQueuedImage();
     }
 
     private boolean recognizesImageScope(String scopeId) {
@@ -285,11 +289,11 @@ public class ClipboardHandler extends BaseMessageHandler {
     public boolean offerImagePaste(Image image) {
         String scopeId = this.imageScopeId;
         if (!this.recognizesImageScope(scopeId)) {
-            // The webview publishes a scope when an input mounts; a gesture before
-            // that has no owner to claim the image, so the paste is dropped rather
-            // than queued for a page that may never ask for it.
-            LOG.debug("Dropping clipboard image paste: no paste scope is published yet");
-            return false;
+            // The webview publishes a scope when an input mounts; a gesture made
+            // before that (startup race, input remounting) would otherwise lose
+            // the image the user just copied. Keep the latest gesture and deliver
+            // it when a scope registers; the expiry frees it if none ever does.
+            return this.queueImagePaste(image);
         }
         if (!this.imageSlots.tryAcquire()) {
             return false;
@@ -301,6 +305,89 @@ public class ClipboardHandler extends BaseMessageHandler {
             release.run();
             LOG.warn("Failed to capture clipboard reply ownership", e);
             return false;
+        }
+    }
+
+    private boolean queueImagePaste(Image image) {
+        if (image == null || this.disposed || this.context.isDisposed()) {
+            return false;
+        }
+        if (!this.imageSlots.tryAcquire()) {
+            return false;
+        }
+        Runnable release = this.releaseOnce();
+        PendingImage pending = new PendingImage(image, release);
+        try {
+            pending.cancelExpiry = this.expirationScheduler.apply(() -> {
+                pending.expired.set(true);
+                this.discardQueuedImage(pending);
+            });
+        } catch (RuntimeException e) {
+            release.run();
+            LOG.warn("Failed to schedule queued clipboard image expiry", e);
+            return false;
+        }
+        synchronized (this.pendingImageLock) {
+            PendingImage previous = this.pendingImage;
+            this.pendingImage = pending;
+            if (previous != null) {
+                previous.cancelExpiry.run();
+                previous.release.run();
+            }
+        }
+        // Same arming race as offerImage: the expiry may have fired between its
+        // scheduling and the assignment above.
+        if (pending.expired.get()) {
+            this.discardQueuedImage(pending);
+            return false;
+        }
+        // A scope published while this image was enqueuing has already run its
+        // flush; kick it again so the gesture is delivered now instead of
+        // stranding until the webview's next scope publication.
+        if (this.recognizesImageScope(this.imageScopeId)) {
+            this.flushQueuedImage();
+        }
+        return true;
+    }
+
+    private void flushQueuedImage() {
+        PendingImage pending;
+        synchronized (this.pendingImageLock) {
+            pending = this.pendingImage;
+            this.pendingImage = null;
+        }
+        if (pending == null) {
+            return;
+        }
+        pending.cancelExpiry.run();
+        String scopeId = this.imageScopeId;
+        if (pending.expired.get() || scopeId == null || !this.recognizesImageScope(scopeId)) {
+            // A cleared scope (empty publish) must not receive a stale clipboard image.
+            pending.release.run();
+            return;
+        }
+        try {
+            // Capture the sender at flush time: the page that just published the
+            // scope is the one able to claim the snapshot. offerImage re-arms the
+            // snapshot expiry and takes over the admission slot on every path.
+            this.offerImage(pending.image, this.context.captureJavaScriptExecutor(), pending.release, scopeId);
+        } catch (Throwable e) {
+            pending.release.run();
+            LOG.warn("Failed to deliver queued clipboard image", e);
+        }
+    }
+
+    private void discardQueuedImage(PendingImage pending) {
+        boolean removed;
+        synchronized (this.pendingImageLock) {
+            removed = this.pendingImage == pending;
+            if (removed) {
+                this.pendingImage = null;
+            }
+        }
+        if (removed) {
+            pending.cancelExpiry.run();
+            pending.release.run();
         }
     }
 
@@ -392,8 +479,30 @@ public class ClipboardHandler extends BaseMessageHandler {
     public void dispose() {
         this.disposed = true;
         this.imageScopeId = null;
+        PendingImage pending;
+        synchronized (this.pendingImageLock) {
+            pending = this.pendingImage;
+            this.pendingImage = null;
+        }
+        if (pending != null) {
+            pending.cancelExpiry.run();
+            pending.release.run();
+        }
         for (String snapshotId : this.imageOffers.keySet()) {
             this.discardOffer(snapshotId);
+        }
+    }
+
+    /** A gesture made before any paste scope was published, awaiting the next registration. */
+    private static final class PendingImage {
+        private final Image image;
+        private final Runnable release;
+        private final AtomicBoolean expired = new AtomicBoolean();
+        private volatile Runnable cancelExpiry = () -> { };
+
+        private PendingImage(Image image, Runnable release) {
+            this.image = image;
+            this.release = release;
         }
     }
 

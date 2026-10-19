@@ -439,8 +439,8 @@
       "installPolicyTip": "Problemas na instalação? Copie o erro para um CLI de IA no terminal para resolver",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Necessário para os recursos de IA do Claude. Inclui o Claude Code SDK e dependências relacionadas.",
-      "codexSdkName": "Codex CLI",
-      "codexSdkDescription": "Necessário para os recursos de IA do Codex. Detecta a CLI oficial do Codex (@openai/codex) instalada na página CLI; o chat usa app-server.",
+      "codexMigratedTitle": "O Codex foi movido para Gerenciamento de Provedores → CLI",
+      "codexMigratedDesc": "O Codex não instala mais um SDK aqui: ele usa a CLI do Codex já instalada na sua máquina (@openai/codex) e o chat roda pelo app-server oficial. Veja o status em Gerenciamento de Provedores → CLI; se ainda não estiver instalada, execute npm install -g @openai/codex no terminal e clique em Re-check nessa página.",
       "loading": "Carregando status das dependências...",
       "install": "Instalar",
       "installing": "Instalando...",
@@ -2197,10 +2197,9 @@
       "reason": "O plugin inicia o \"codex app-server\" a partir do Codex CLI encontrado na sua máquina. Uma cópia instalada pela metade - por exemplo, uma instalação global do npm sem o binário da plataforma - termina com código 1 e derruba o turno junto.",
       "solutions": {
         "reinstallCodexCli": {
-          "title": "Opção 1: remover a instalação quebrada e reinstalar o CLI oficial",
-          "step0": "1. Remova primeiro a instalação global antiga (duas cópias instaladas é a causa mais comum):",
-          "step1": "2. Instale o CLI oficial novamente, usando o registro oficial do npm em vez de um espelho:",
-          "step2": "3. Confirme que o CLI responde antes de enviar de novo:"
+          "title": "Opção 1: instalar ou atualizar o CLI usando as instruções oficiais",
+          "step0": "1. Abra as instruções oficiais e escolha o instalador independente, o npm ou o Homebrew para o seu ambiente de execução. Atualize pelo canal de instalação original; não execute npm uninstall em uma instalação independente:",
+          "step1": "2. Confira a versão em um novo terminal, atualize Gerenciamento de Provedores → CLI e envie novamente:"
         },
         "pointCodexBin": {
           "title": "Opção 2: apontar o plugin para um binário que funcione",

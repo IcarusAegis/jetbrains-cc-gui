@@ -7,7 +7,9 @@ interface UseDialogCountdownTimeoutOptions {
   requestKey?: string | null;
   timeoutSeconds: number;
   deadlineMs?: number;
-  onTimeout: () => void;
+  /** Return `false` when the timeout decision could not be sent (refused bridge
+   * write); the dialog then re-arms instead of deadlocking on the next click. */
+  onTimeout: () => void | boolean;
 }
 
 interface UseDialogCountdownTimeoutReturn {
@@ -36,7 +38,11 @@ export function useDialogCountdownTimeout({
   const triggerTimeout = useCallback(() => {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    timeoutOptionsRef.current.onTimeout();
+    // A refused bridge write must not deadlock the dialog: re-arm so the next
+    // interaction retries the timeout decision (the deadline itself never moves).
+    if (timeoutOptionsRef.current.onTimeout() === false) {
+      submittedRef.current = false;
+    }
   }, []);
 
   const markSubmitted = useCallback(() => {

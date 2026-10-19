@@ -72,15 +72,17 @@ describe('matchErrorPattern', () => {
       'codex runtime failure: codex app-server exited (code=1, signal=null)',
       '',
       '- /usr/local/bin/codex: codex app-server exited (code=1, signal=null) - spawn ENOENT',
-      '- Codex CLI check: run "codex --version"; reinstall the CLI with "npm install -g @openai/codex@latest"',
+      '- Codex CLI check: run "codex --version"; install or update using https://learn.chatgpt.com/docs/codex/cli#getting-started',
     ].join('\n');
     const result = matchErrorPattern(text);
     expect(result?.code).toBe('codexCliUnavailable');
     expect(result?.solutions).toHaveLength(2);
     const reinstall = result?.solutions.find((s) => s.key === 'reinstallCodexCli');
     expect(reinstall?.recommended).toBe(true);
-    expect(reinstall?.steps.map((step) => (step.kind === 'command' ? step.command : step.action)))
-      .toEqual(['npm uninstall -g @openai/codex', 'npm install -g @openai/codex@latest', 'codex --version']);
+    expect(reinstall?.steps).toEqual([
+      { kind: 'link', url: 'https://learn.chatgpt.com/docs/codex/cli#getting-started' },
+      { kind: 'command', command: 'codex --version' },
+    ]);
   });
 
   it('does not treat a clean exit line without the CLI hint as a CLI install problem', () => {

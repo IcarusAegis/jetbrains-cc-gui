@@ -108,4 +108,3 @@ export function useCodexPlanState({ provider, threadId, cwd = '', turnActive = f
 
   return { plan, executionPending, executePlan };
 }
-

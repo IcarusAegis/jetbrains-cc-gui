@@ -36,6 +36,9 @@ public final class CliStatusDetector {
     private static final Pattern VERSION_TOKEN = Pattern.compile(
             "(\\d+\\.\\d+(?:\\.\\d+)?(?:[-+][A-Za-z0-9.]+)?)"
     );
+    private static final Pattern CODEX_VERSION_LINE = Pattern.compile(
+            "(?m)^\\h*codex-cli\\h+" + VERSION_TOKEN.pattern() + "\\h*$"
+    );
 
     /** Immutable holder for a cached detectAll() result. */
     private static final class CachedDetection {
@@ -131,18 +134,19 @@ public final class CliStatusDetector {
                 for (String key : envKeysFor(tool)) {
                     String override = firstNonBlank(System.getenv(key));
                     if (override != null) {
-                        ProbeResult probe = probe(preferWindowsSpawnable(override));
+                        ProbeResult probe = probe(tool, preferWindowsSpawnable(override));
                         return probe.ok ? CliToolStatus.installed(tool, probe.version, probe.resolvedPath)
                                 : CliToolStatus.error(tool, "Configured Codex CLI cannot be executed: " + override);
                     }
                 }
             }
             if (tool == CliToolId.ZCODE) {
-                // No PATH binary: resolve the app-server entry inside the desktop app bundle.
-                return detectZcodeAppBundle(tool);
+                // The PATH entry may launch the desktop app; resolve the bundled Node entry instead.
+                String platform = PlatformUtils.isWindows() ? "win32" : PlatformUtils.isMac() ? "darwin" : "linux";
+                return detectZcodeAppBundle(platform, System.getenv());
             }
             for (String candidate : candidatesFor(tool)) {
-                ProbeResult probe = probe(candidate);
+                ProbeResult probe = probe(tool, candidate);
                 if (probe.ok) {
                     return CliToolStatus.installed(tool, probe.version, probe.resolvedPath);
                 }
@@ -152,7 +156,7 @@ public final class CliStatusDetector {
             // or custom prefixes only exist once .zshrc/.bashrc/config.fish is sourced.
             String viaShell = resolveViaLoginShell(tool.getBinaryName());
             if (viaShell != null) {
-                ProbeResult probe = probe(viaShell);
+                ProbeResult probe = probe(tool, viaShell);
                 if (probe.ok) {
                     return CliToolStatus.installed(tool, probe.version, probe.resolvedPath);
                 }
@@ -162,7 +166,7 @@ public final class CliStatusDetector {
                         PlatformUtils.isWindows() ? "win32" : PlatformUtils.isMac() ? "darwin" : "linux",
                         System.getProperty("os.arch"))) {
                     if (candidate.toFile().isFile()) {
-                        ProbeResult probe = probe(candidate.toString());
+                        ProbeResult probe = probe(tool, candidate.toString());
                         if (probe.ok) {
                             return CliToolStatus.installed(tool, probe.version, probe.resolvedPath);
                         }
@@ -210,7 +214,7 @@ public final class CliStatusDetector {
                 ? new String[]{tool.getBinaryName(), tool.getAltBinaryName()}
                 : new String[]{tool.getBinaryName()};
         String[] extensions = PlatformUtils.isWindows()
-                ? new String[]{".cmd", ".exe", ""}
+                ? (tool == CliToolId.CODEX ? new String[]{".exe", ".cmd", ""} : new String[]{".cmd", ".exe", ""})
                 : new String[]{""};
 
         // 1. Explicit env overrides
@@ -251,6 +255,30 @@ public final class CliStatusDetector {
         return new ArrayList<>(candidates);
     }
 
+    /** Mirrors the official standalone installer layout, covering entries the IDE process may not see on PATH. */
+    static List<String> codexHomeBinDirs(String home, String platform, Map<String, String> env) {
+        List<String> dirs = new ArrayList<>();
+        String installDir = firstNonBlank(env.get("CODEX_INSTALL_DIR"));
+        if (installDir != null) {
+            dirs.add(installDir);
+        }
+        if ("win32".equals(platform)) {
+            String localAppData = firstNonBlank(env.get("LOCALAPPDATA"));
+            dirs.add(join(localAppData != null ? localAppData : join(home, "AppData", "Local"),
+                    "Programs", "OpenAI", "Codex", "bin"));
+        }
+        dirs.add(join(home, ".local", "bin"));
+        String codexHome = firstNonBlank(env.get("CODEX_HOME"));
+        String current = join(codexHome != null ? codexHome : join(home, ".codex"), "packages", "standalone", "current");
+        // Follow only the version the installer selected; older standalone
+        // packages place the binary directly under current.
+        dirs.add(join(current, "bin"));
+        dirs.add(current);
+        dirs.add(join(home, ".cargo", "bin"));
+        dirs.add(join(home, ".codex", "bin"));
+        return dirs;
+    }
+
     private static List<String> homeBinDirs(CliToolId tool, String home) {
         List<String> dirs = new ArrayList<>();
         if (home == null || home.isBlank()) {
@@ -258,9 +286,8 @@ public final class CliStatusDetector {
         }
         switch (tool) {
             case CODEX:
-                dirs.add(join(home, ".local", "bin"));
-                dirs.add(join(home, ".cargo", "bin"));
-                dirs.add(join(home, ".codex", "bin"));
+                dirs.addAll(codexHomeBinDirs(home,
+                        PlatformUtils.isWindows() ? "win32" : PlatformUtils.isMac() ? "darwin" : "linux", System.getenv()));
                 break;
             case GROK:
                 dirs.add(join(home, ".grok", "bin"));
@@ -416,50 +443,69 @@ public final class CliStatusDetector {
         };
     }
     /**
-     * ZCode ships no PATH binary: the app-server entry ({@code zcode.cjs}) is bundled
-     * inside the desktop client, so detection means locating that file at the
-     * well-known install locations (env override first). The resolved file path
-     * plays the role of the "binary" in the status payload.
+     * Locate the bundled {@code zcode.cjs}, since the desktop launcher on PATH cannot run under Node.
+     * Keep candidates aligned with ai-bridge's zcode-config.js so detection matches runtime discovery.
      */
-    private static CliToolStatus detectZcodeAppBundle(CliToolId tool) {
-        for (String candidate : zcodeAppBundleCandidates()) {
+    static CliToolStatus detectZcodeAppBundle(String platform, Map<String, String> env) {
+        for (String candidate : zcodeAppBundleCandidates(platform, env)) {
             File file = new File(candidate);
             if (file.isFile()) {
-                return CliToolStatus.installed(tool, "unknown", file.getAbsolutePath());
+                return CliToolStatus.installed(CliToolId.ZCODE, "unknown", file.getAbsolutePath());
             }
         }
-        return CliToolStatus.notInstalled(tool);
+        return CliToolStatus.notInstalled(CliToolId.ZCODE);
     }
 
-    private static List<String> zcodeAppBundleCandidates() {
+    static List<String> zcodeAppBundleCandidates(String platform, Map<String, String> env) {
         List<String> candidates = new ArrayList<>();
-        // 1. Explicit env overrides (point directly at zcode.cjs)
         for (String envKey : envKeysFor(CliToolId.ZCODE)) {
-            String value = firstNonBlank(System.getenv(envKey));
+            String value = firstNonBlank(env.get(envKey));
             if (value != null) {
-                candidates.add(value.trim());
+                candidates.add(value);
             }
         }
-        // 2. Desktop app bundle locations (mirrors ai-bridge zcode-config.js)
-        if (PlatformUtils.isWindows()) {
-            String localAppData = System.getenv("LOCALAPPDATA");
+        if ("win32".equals(platform)) {
+            String localAppData = env.get("LOCALAPPDATA");
             if (localAppData != null && !localAppData.isBlank()) {
                 candidates.add(join(localAppData, "Programs", "ZCode", "resources", "glm", "zcode.cjs"));
             }
-            String programFiles = System.getenv("ProgramFiles");
+            String programFiles = env.get("ProgramFiles");
             if (programFiles != null && !programFiles.isBlank()) {
                 candidates.add(join(programFiles, "ZCode", "resources", "glm", "zcode.cjs"));
             }
-            String programFilesX86 = System.getenv("ProgramFiles(x86)");
+            String programFilesX86 = env.get("ProgramFiles(x86)");
             if (programFilesX86 != null && !programFilesX86.isBlank()) {
                 candidates.add(join(programFilesX86, "ZCode", "resources", "glm", "zcode.cjs"));
             }
-        } else if (PlatformUtils.isMac()) {
+        } else if ("darwin".equals(platform)) {
             candidates.add("/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs");
         } else {
+            candidates.add("/opt/ZCode/resources/glm/zcode.cjs");
             candidates.add("/opt/ZCode/app/resources/glm/zcode.cjs");
         }
         return candidates;
+    }
+
+    private static ProbeResult probe(CliToolId tool, String candidate) {
+        if (tool != CliToolId.CODEX) {
+            return probe(candidate);
+        }
+        String version = probeCodexVersion(candidate);
+        if (version == null) {
+            return ProbeResult.fail();
+        }
+        String path = resolveWhichLike(candidate);
+        return new ProbeResult(true, version, path != null ? path : candidate);
+    }
+
+    /** A half-installed npm launcher can still be executable; only real version output proves Codex can start. */
+    static String probeCodexVersion(String candidate) {
+        ProcessResult result = run(List.of(candidate, "--version"), parentDirOf(candidate));
+        if (result.exitCode != 0 || result.stdout == null) {
+            return null;
+        }
+        Matcher matcher = CODEX_VERSION_LINE.matcher(result.stdout);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private static ProbeResult probe(String candidate) {

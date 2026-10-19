@@ -10,6 +10,7 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { getCodemossDir } from './path-utils.js';
 import { resolveCodexCli } from '../services/codex/codex-cli-resolver.js';
+import { getCodexPristineBaseEnv } from '../services/codex/persistent-codex-service.js';
 
 // Base path for dependencies directory - uses the shared path utility
 const DEPS_BASE = join(getCodemossDir(), 'dependencies');
@@ -149,6 +150,10 @@ export function getCodexCliStatus(depsBaseOverride) {
     }
     const status = resolveCodexCli({
         depsRoot: join(getSdkRootDir('codex-sdk', depsBaseOverride), 'node_modules'),
+        // Never resolve against the live process.env: request handlers inject
+        // params.env into it, and a poisoned PATH would redirect discovery to
+        // an attacker-controlled `codex` binary.
+        env: getCodexPristineBaseEnv(),
         ...(depsBaseOverride ? { discoverCli: () => null, env: {} } : {}),
     });
     cliStatusCache.set(cacheKey, { status, at: Date.now() });
