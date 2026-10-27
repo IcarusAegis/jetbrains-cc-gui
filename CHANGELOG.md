@@ -1,3 +1,67 @@
+##### **2026年10月21日（v0.6.2）**
+
+English:
+
+✨ Features
+- **Keep your chat font size after restarting the IDE**: JCEF pages loaded through `loadHTML` cannot rely on `localStorage` surviving a restart, so the chosen scale level was lost every time the IDE reopened. The level (1–6) is now stored in `~/.codemoss/config.json` next to the UI font-family preference and restored through the existing startup font payload; explicit picks carry a request ID so a late bootstrap or an older acknowledgement cannot undo a newer choice, one shared store keeps Settings, the global `--font-scale` and the OSR repaint nudge in sync, an unreadable config file is rejected instead of replaced, and only a real legacy browser choice is migrated — the default is never pinned (by @gadfly3173)
+
+🔧 Improvements
+- **Restore chat tabs without downloading the same startup files again**: the compressed entry module and stylesheets are now fetched in parallel, with the entry no longer waiting for CSS, and reused through a cache bucket shared by every chat tab and IDE session; every cached byte is checked against a SHA-256 digest baked into the page before it is executed, `navigator.locks` makes tabs restored at the same time share one download, the bucket is trimmed to the newest 8 entries on upgrade, and when the IDE denies storage the network path plus the visible error fallback still work (by @Jefung, @zhukunpenglinyutong)
+- **Make Gradle builds resilient in CN**: the Aliyun public mirror is consulted before `mavenCentral` (direct connections to repo.maven.apache.org are frequently TLS-reset), and the foojay toolchain resolver lets Gradle provision the required JDK toolchain instead of failing when the local JDK does not match the target version (by @zhukunpenglinyutong)
+
+🐛 Fixes
+- **Fix the Token Tracker dashboard crashing with `removeChild` errors** (#1951): the dashboard is a lazy chunk that imports React from the entry module, but the startup bootstrap evaluated the entry under a blob URL while lazy chunks resolved the canonical asset URL — opening the dashboard therefore loaded a second copy of the app and React, and the diverging trees threw “Failed to execute 'removeChild' on 'Node'”. The bootstrap now installs an import map that remaps the canonical entry URL onto the evaluated blob, so the entry (and its React instance) keeps a single module identity while the compressed bytes stay cached; reopening the dashboard reuses the running app instead of re-evaluating it (by @elexiang, @Jefung, @zhukunpenglinyutong)
+- **Keep the line range visible on long file references**: inserting a selection such as `@C:/workspace/src/.../PhysicalTestDataServiceImpl.java#L73-76` ellipsized the whole label, so the `#L73-76` part vanished; the range is now its own non-shrinking segment after the (still truncatable) filename, the tooltip keeps the full path with its range, and the request path comes from a dedicated `data-absolute-path` attribute instead of being derived from the display tooltip (by @elexiang)
+- **Show plugin skills that are declared as individual directories**: `plugin.json` may list `"skills": ["./skills/engineering/tdd"]` instead of one parent folder, but the scanner always treated the path it received as a parent directory, so such plugins silently contributed zero slash commands — no log line, no warning. A declared directory that itself contains a `SKILL.md` is now scanned as a skill, and a directory that is both a skill and holds child skills yields all of them (asset folders contain no `SKILL.md` and are skipped) (by @JackLin513, @zhukunpenglinyutong)
+- **Stop one broken skill from erasing the `$` Codex skill list**: a partial `skills/list` failure (one unreadable `SKILL.md`, invalid frontmatter, a stale skill under another cwd) reports an error while still returning valid skills, and the completion coordinator treated any error as fatal — publishing an empty list, erasing custom skills and marking the native catalog authoritative so the backend-scanned list was ignored for the rest of the session. Whatever the runtime did return is now published, an outright failed read keeps the backend-scanned fallback until real data arrives, and the warning still reaches Settings > Skills (by @zhukunpenglinyutong)
+- **Let subagents keep their own permission mode**: the `PreToolUse` hook read the parent's cached mode for every call, so a worker running under the native auto reviewer was forced back to “ask” as soon as the parent switched modes, and a worker's `EnterPlanMode` / `ExitPlanMode` mutated the parent Query or opened a parent plan-approval dialog. A recognized `permission_mode` from the hook input now wins for worker calls (identified by `agent_id`, not the also-main-thread `agent_type`), worker plan transitions, plan-file ownership and the SDK-only `dontAsk` / `bubble` modes yield to the native permission flow, and missing or unknown modes still fall back to the parent policy (by @gadfly3173)
+- **Stop pasted images from leaking between chat tabs**: drafts lived in `localStorage`, which every same-origin chat tab shares, so one webview's screenshots could be restored in another. Drafts now use `sessionStorage` — surviving input remounts and page reloads but never crossing webviews — the legacy shared draft is deliberately left behind because its owner is unknown, a failed or oversized save drops the previous draft so removed images stay removed, and a just-restored draft is not rewritten, so full storage cannot wipe what was restored (by @gadfly3173)
+- **Keep dropdown fly-outs attached to their row at any font zoom**: submenu geometry mixed zoomed `getBoundingClientRect` values with layout-pixel scroll sizes, so above 100% font zoom the reasoning fly-out drifted off its row and overflowed small viewports. The whole submenu layout is now computed in layout pixels, the natural content size is measured even when `maxHeight` clips the box, the main dropdown clamps its width to the viewport while matching its CSS floor, and open menus follow window resizes and content changes through a `ResizeObserver` instead of measuring once at open time (by @gadfly3173)
+
+中文：
+
+✨ 新功能
+- **重启 IDE 后保留聊天字号档位**：通过 `loadHTML` 加载的 JCEF 页面无法指望 `localStorage` 跨重启存活，因此每次重开 IDE 选好的字号档位都会丢失。档位（1–6）现在与 UI 字体偏好一起保存在 `~/.codemoss/config.json`，并通过已有的启动字体下发通道恢复；显式选择会带上请求 ID，迟到的引导配置或旧的确认回执都无法覆盖更新的选择，共享状态保证设置面板、全局 `--font-scale` 与 OSR 重绘补偿始终一致，配置无法读取时会被拒绝而不是被覆盖写入，且只会迁移真实存在的旧版浏览器选择——不会把默认值写死（by @gadfly3173）
+
+🔧 优化
+- **恢复聊天标签页时不再重复下载同一批启动资源**：压缩的入口模块与样式表改为并行加载（入口不再等 CSS），并通过跨聊天标签页共享的缓存复用；每个被复用的字节在执行前都会与页面内置的 SHA-256 摘要比对，`navigator.locks` 让同时恢复的标签页共享一次下载，升级时缓存只保留最新的 8 项，若 IDE 禁止存储则自动走网络路径并保留可见的错误提示（by @Jefung、@zhukunpenglinyutong）
+- **改善国内的 Gradle 构建可靠性**：优先使用阿里云公共镜像再访问 `mavenCentral`（直连 repo.maven.apache.org 经常被 TLS 重置），并引入 foojay 工具链解析器，让 Gradle 自动获取所需 JDK 工具链，而不是因本地 JDK 版本不匹配直接失败（by @zhukunpenglinyutong）
+
+🐛 修复
+- **修复 Token Tracker 面板报 `removeChild` 错误的问题**（#1951）：该面板是懒加载 chunk，会从入口模块导入 React，而启动引导用 blob URL 求值入口、懒加载 chunk 却解析规范的资源地址——于是打开面板会再加载一份应用与 React，两份实例的 DOM 树互相冲突，抛出 “Failed to execute 'removeChild' on 'Node'”。现在引导阶段注入 import map，把规范入口地址映射到已求值的 blob，入口（及其 React 实例）保持单一模块身份，压缩字节依旧走缓存；重复打开面板会复用正在运行的应用，不再重复求值（by @elexiang、@Jefung、@zhukunpenglinyutong）
+- **长文件引用不再丢掉行号范围**：插入 `@C:/workspace/src/.../PhysicalTestDataServiceImpl.java#L73-76` 这类选区引用时，整段标签会被省略号截断，`#L73-76` 直接看不见；现在行号范围是独立且不会被压缩的片段，文件名仍可截断，浮层保留带行号的完整路径，请求实际使用的路径改由独立的 `data-absolute-path` 属性提供，不再从展示用浮层反推（by @elexiang）
+- **修复按单个目录声明技能的插件不显示技能**：`plugin.json` 可能写成 `"skills": ["./skills/engineering/tdd"]` 而不是一个父目录，但扫描逻辑始终把收到的路径当父目录处理，导致这类插件的斜杠命令静默消失——既没有日志也没有警告。现在若声明目录自身包含 `SKILL.md` 就按其本身作为技能扫描；同时该目录还包含子技能时也会全部扫描出来（资源目录没有 `SKILL.md`，会被自动跳过）（by @JackLin513、@zhukunpenglinyutong）
+- **单个损坏技能不再清空 `$` Codex 技能列表**：`skills/list` 部分失败（某一个 `SKILL.md` 无法读取、frontmatter 非法、另一个 cwd 下的过期技能）会在报错的同时返回有效技能，而补全协调逻辑把任何错误都当成致命错误——发布空列表，清掉用户的自定义技能，并把原生目录标记为权威来源，导致后端扫描的列表在本次会话剩余时间内被忽略。现在会发布运行时实际返回的结果，真正读取失败时保留后端扫描的兜底列表直到拿到真实数据，警告仍会在「设置 > 技能」中显示（by @zhukunpenglinyutong）
+- **子智能体保留自己的权限模式**：`PreToolUse` 钩子对每次调用都读取父级缓存的模式，因此父级一切换模式，运行在原生自动审批下的子智能体就会被强制退回「询问」；子智能体调用 `EnterPlanMode` / `ExitPlanMode` 还会改动父级 Query 或弹出父级的计划审批框。现在子智能体调用（按 `agent_id` 识别，而不是同样会描述主线程的 `agent_type`）会优先采用钩子输入中合法的 `permission_mode`，子智能体的计划切换、计划文件归属以及 SDK 专属的 `dontAsk` / `bubble` 模式都交由原生权限流程处理，缺失或未知模式仍回退到父级策略（by @gadfly3173）
+- **粘贴的图片不再串到其他聊天标签页**：草稿原先存在 `localStorage`，同源的所有聊天标签页共用一份，导致某个 webview 的截图会被另一个恢复出来。现在草稿改用 `sessionStorage`——仍能跨输入框重建与页面重载存活，但绝不会跨 webview——旧的共享草稿会被有意留在原处（无法判断其归属），保存失败或超出大小上限时会清除旧草稿，使已删除的图片在重载后不会回来，刚恢复的草稿也不会被重写，避免存储写满时把恢复内容清掉（by @gadfly3173）
+- **任意字号缩放下下拉浮层都贴合所属行**：子菜单定位混用了被缩放过的 `getBoundingClientRect` 与布局像素的滚动尺寸，导致字号缩放超过 100% 时推理强度浮层偏离所在行并溢出小窗口。现在子菜单布局整体按布局像素计算，即使 `maxHeight` 裁剪了盒模型也能测量到内容的自然尺寸，主下拉宽度会被限制在视口内并与 CSS 最小宽度保持一致，已展开的菜单通过 `ResizeObserver` 跟随窗口尺寸和内容变化，而不是只在打开时测量一次（by @gadfly3173）
+
+---
+
+##### **2026年10月19日（v0.6.1）**
+
+English:
+
+🔧 Improvements
+- **Load chat tabs faster on Remote JCEF**: the webview no longer ships as a ~10 MB single-file HTML sent to every tab; hashed, gzipped assets are served from a stable origin and cached across chat tabs, and a visible fallback message replaces the blank page if the compressed bootstrap ever fails to load (by @Jefung)
+
+🐛 Fixes
+- **Stop subagents from silently falling back to built-in model names**: every model tier configured in settings.json (opus / sonnet / haiku / small-fast / subagent) now reaches the CLI environment, so a subagent declaring e.g. `model: opus` resolves to the configured third-party model instead of an unrecognized built-in name that endpoints silently reroute; tiers no longer present in the settings are cleared, so switching providers cannot leave stale model names behind (by @8p98h2fgnd-max)
+- **Keep Codex Full Auto and the effective sandbox in sync**: Full Auto now maps to danger-full-access on every platform; a wiped or pre-scope snapshot re-derives its access scope from the permission mode without ever overriding an explicit user choice; Settings > Permissions shows only the runtime-confirmed sandbox ("not confirmed yet" until the app-server echoes it) instead of presenting the requested value as effective (by @zhukunpenglinyutong)
+- **Refine the Claude plan usage indicator**: the compact summary no longer crams reset dates into one line; full per-window reset times (local time), the plan level and a stale-data warning move into a keyboard-accessible tooltip (Arrow/PageUp/PageDown/Home/End scroll, Escape closes) that follows the input box while it is dragged and always stays inside the viewport (by @GGMGG)
+
+中文：
+
+🔧 优化
+- **远程 JCEF 下聊天标签页加载更快**：webview 不再以约 10 MB 的单文件 HTML 逐标签页传输；带内容哈希的 gzip 资源通过固定域名供给并跨标签页缓存，压缩引导加载失败时显示明确的错误提示，不再白屏（by @Jefung）
+
+🐛 修复
+- **堵住子智能体静默回退到内置模型名**：settings.json 中配置的所有模型档位（opus / sonnet / haiku / small-fast / subagent）现在都会同步到 CLI 环境变量，子智能体声明 `model: opus` 等档位时可正确解析到配置的第三方模型，不再回退为端点无法识别而被静默改路由的内置模型名；设置中已删除的档位会被同步清除，避免切换供应商后残留旧模型名（by @8p98h2fgnd-max）
+- **Codex Full Auto 与实际生效沙箱保持同步**：Full Auto 在所有平台都映射为 danger-full-access；本地快照被清空或不含沙箱字段时，访问范围会跟随权限模式重新推导，且绝不覆盖用户显式做出的选择；「设置 > 权限」仅显示运行时确认的沙箱（确认前显示「尚未确认」），不再把请求值当作已生效值展示（by @zhukunpenglinyutong）
+- **优化 Claude 额度指示器**：紧凑摘要不再把重置日期挤在一行内；各窗口的完整重置时间（本地时间）、套餐等级与数据过期警示移至支持键盘操作的浮窗（方向键 / PageUp / PageDown / Home / End 滚动，Escape 关闭），浮窗跟随输入框拖拽移动并始终保持在可视区域内（by @GGMGG）
+
+---
+
 ##### **2026年10月18日（v0.6.0）**
 
 English:

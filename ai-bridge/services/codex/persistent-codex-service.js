@@ -317,7 +317,15 @@ function getServiceOrNull(stdinData) {
 // Operation settings assembly
 // =============================================================================
 
-function buildTurnSettings(stdinData) {
+/**
+ * Translate one turn's stdin payload into native app-server settings.
+ *
+ * Exported because this mapping is the contract the webview mirrors when it
+ * derives an access scope from the permission mode: Full Auto means
+ * danger-full-access + `never` on every platform. Divergence here is what made
+ * a Full Auto session run sandboxed, so the mapping is pinned by tests.
+ */
+export function buildTurnSettings(stdinData) {
   const settings = {};
   const permissionMode = typeof stdinData?.permissionMode === 'string'
     ? stdinData.permissionMode.trim() : '';

@@ -31,7 +31,8 @@ public class WebviewInitializerTest {
         String bootstrap = String.join("\n", scripts);
 
         Assert.assertTrue(bootstrap.contains("applyIdeaFontConfig"));
-        Assert.assertTrue(bootstrap.contains("applyUiFontConfig"));
+        Assert.assertTrue(bootstrap.contains("window.applyUiFontConfig(c, true)"));
+        Assert.assertTrue(bootstrap.contains("window.__pendingUiFontConfig = c"));
         Assert.assertTrue(bootstrap.contains("applyCodeFontConfig"));
         Assert.assertTrue(bootstrap.contains("applyIdeaLanguageConfig"));
     }

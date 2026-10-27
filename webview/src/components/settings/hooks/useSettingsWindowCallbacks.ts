@@ -78,9 +78,6 @@ export interface SettingsWindowCallbacksDeps {
   setLocalStreamingEnabled: (enabled: boolean) => void;
   setCodexSandboxMode?: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
   setCodexSandboxSource?: (source: string) => void;
-  setCodexSandboxDesired?: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
-  setCodexSandboxEffective?: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
-  setCodexSandboxConflict?: (conflict: boolean) => void;
   setLocalSendShortcut: (shortcut: 'enter' | 'cmdEnter') => void;
   setLoading: (loading: boolean) => void;
   setCodexLoading: (loading: boolean) => void;
@@ -291,24 +288,15 @@ export function useSettingsWindowCallbacks(deps: SettingsWindowCallbacksDeps) {
       };
     }
 
-    // Codex sandbox mode callback
+    // Codex sandbox callback: the legacy project record only. Desired/effective
+    // are never reported by the host — the live scope comes from the chat state
+    // and the app-server's own thread/settings/updated echo.
     window.updateCodexSandboxMode = (jsonStr: string) => {
       try {
         const data = JSON.parse(jsonStr);
         const mode = data?.sandboxMode;
         if (mode === 'read-only' || mode === 'workspace-write' || mode === 'danger-full-access') {
           d().setCodexSandboxMode?.(mode);
-        }
-        const desired = data?.sandboxDesired;
-        if (desired === 'read-only' || desired === 'workspace-write' || desired === 'danger-full-access') {
-          d().setCodexSandboxDesired?.(desired);
-        }
-        const effective = data?.sandboxEffective;
-        if (effective === 'read-only' || effective === 'workspace-write' || effective === 'danger-full-access') {
-          d().setCodexSandboxEffective?.(effective);
-        }
-        if (typeof data?.sandboxConflict === 'boolean') {
-          d().setCodexSandboxConflict?.(data.sandboxConflict);
         }
         if (typeof data?.sandboxSource === 'string') {
           d().setCodexSandboxSource?.(data.sandboxSource);

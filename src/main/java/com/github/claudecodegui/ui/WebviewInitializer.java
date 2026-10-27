@@ -1013,7 +1013,7 @@ public class WebviewInitializer {
                         editorFontConfig, editorFontConfig),
                 String.format(
                         "(function(){ var c = JSON.parse('%s'); " +
-                                "if (window.applyUiFontConfig) { window.applyUiFontConfig(c); } " +
+                                "if (window.applyUiFontConfig) { window.applyUiFontConfig(c, true); } " +
                                 "else { window.__pendingUiFontConfig = c; } })()",
                         escapedUiFontConfig),
                 String.format(

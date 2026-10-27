@@ -4,6 +4,7 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -71,6 +72,19 @@ public class HtmlLoaderTest {
         assertTrue(html.substring(bodyStart, bodyEnd).contains("style=\"background-color:"));
         assertTrue("per-tab HTML must not inline the frontend bundle", html.length() < 32_768);
         assertTrue(html.contains("https://cc-gui-webview.local/assets/"));
-        assertTrue(html.contains("DecompressionStream('gzip')"));
+        assertTrue("entry must be fetched as a single compressed canonical asset",
+                Pattern.compile("[\"']https://cc-gui-webview\\.local/assets/[^\"'/]+\\.js\\.gz[\"']")
+                        .matcher(html).find());
+        assertTrue("entry import map must remap the canonical module URL to the evaluated blob",
+                Pattern.compile("imports:\\s*\\{\\s*\\[\"https://cc-gui-webview\\.local/assets/[^\"'/]+\\.js\"\\]:\\s*objectUrl")
+                        .matcher(html).find());
+        assertTrue(html.contains("type = 'importmap'"));
+        assertTrue("the verified source must be evaluated exactly once, as a module",
+                html.contains("await import(objectUrl)"));
+        assertFalse("a direct canonical import would evaluate the entry twice",
+                Pattern.compile("import\\(\\s*[\"']https://cc-gui-webview\\.local/assets/")
+                        .matcher(html).find());
+        assertFalse("a module script tag would load the entry a second time",
+                html.contains("<script type=\"module\""));
     }
 }

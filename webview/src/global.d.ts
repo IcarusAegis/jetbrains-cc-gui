@@ -605,7 +605,7 @@ interface Window {
   /**
    * Apply effective plugin UI font configuration (called from Java backend)
    */
-  applyUiFontConfig?: (config: import('./types/uiFontConfig').UiFontConfig | string) => void;
+  applyUiFontConfig?: (config: import('./types/uiFontConfig').UiFontConfig | string, isStartup?: boolean) => void;
 
   /**
    * Apply effective plugin code font configuration (called from Java backend)

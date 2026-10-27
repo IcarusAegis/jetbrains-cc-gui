@@ -548,14 +548,18 @@ public class CodemossSettingsService {
      * Read the config file.
      */
     public JsonObject readConfig() throws IOException {
-        String configPath = getConfigPath();
+        return this.readConfig(true);
+    }
+
+    private JsonObject readConfig(boolean useDefaultsOnFailure) throws IOException {
+        String configPath = this.getConfigPath();
         File configFile = new File(configPath);
 
         if (!configFile.exists()) {
             // Called many times per second from settings getters, so keep the read path quiet:
             // at INFO this and the line below produced ~250 lines per 3 minutes.
             LOG.debug("[CodemossSettings] Config file not found, creating default: " + configPath);
-            return createDefaultConfig();
+            return this.createDefaultConfig();
         }
 
         try (FileReader reader = new FileReader(configFile, StandardCharsets.UTF_8)) {
@@ -563,8 +567,11 @@ public class CodemossSettingsService {
             LOG.debug("[CodemossSettings] Successfully read config from: " + configPath);
             return config;
         } catch (Exception e) {
+            if (!useDefaultsOnFailure) {
+                throw new IOException("Failed to read configuration: " + configPath, e);
+            }
             LOG.warn("[CodemossSettings] Failed to read config: " + e.getMessage());
-            return createDefaultConfig();
+            return this.createDefaultConfig();
         }
     }
 
@@ -874,6 +881,41 @@ public class CodemossSettingsService {
     }
 
     // ==================== UI Font Config Management ====================
+
+    /**
+     * Read the explicit global font-size level, leaving an unset preference distinguishable from the default.
+     *
+     * @return level from 1 to 6, or null when no valid preference has been saved
+     * @throws IOException if configuration cannot be read
+     */
+    public Integer getFontSizeLevel() throws IOException {
+        // Automatic migration must distinguish an unreadable config from an absent preference.
+        JsonElement value = this.readConfig(false).get("fontSizeLevel");
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            return null;
+        }
+        try {
+            int level = value.getAsBigDecimal().intValueExact();
+            return level >= 1 && level <= 6 ? level : null;
+        } catch (ArithmeticException | NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Persist the global font-size level outside the transient JCEF page storage.
+     *
+     * @param level selected level from 1 to 6
+     * @throws IOException if configuration cannot be saved
+     */
+    public void setFontSizeLevel(int level) throws IOException {
+        if (level < 1 || level > 6) {
+            throw new IllegalArgumentException("Font size level must be between 1 and 6");
+        }
+        JsonObject config = this.readConfig(false);
+        config.addProperty("fontSizeLevel", level);
+        this.writeConfig(config);
+    }
 
     /**
      * Get persisted UI font configuration.

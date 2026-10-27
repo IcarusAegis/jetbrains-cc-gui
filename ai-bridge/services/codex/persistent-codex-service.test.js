@@ -37,9 +37,35 @@ const {
   codexReadThreadPersistent,
   codexCountThreadMessagesPersistent,
   setCodexPristineBaseEnv,
+  buildTurnSettings,
 } = await import('./persistent-codex-service.js');
 
 setCodexPristineBaseEnv({ ...process.env, CODEX_HOME: join(testCwd, 'native-home') });
+
+// The webview mirrors this mapping when it derives an access scope from the
+// permission mode (deriveCodexAccessScopeFromMode). A drift here is what made a
+// Full Auto session keep running inside the workspace sandbox.
+test('Full Auto maps to danger-full-access without approvals', () => {
+  const settings = buildTurnSettings({ permissionMode: 'bypassPermissions' });
+  assert.equal(settings.approvalPolicy, 'never');
+  assert.equal(settings.sandbox, 'danger-full-access');
+});
+
+test('native auto review stays inside the workspace sandbox', () => {
+  const settings = buildTurnSettings({ permissionMode: 'auto' });
+  assert.equal(settings.approvalPolicy, 'on-request');
+  assert.equal(settings.approvalsReviewer, 'auto_review');
+  assert.equal(settings.sandbox, 'workspace-write');
+});
+
+test('an explicit per-turn sandbox selection wins over the mode mapping', () => {
+  const settings = buildTurnSettings({
+    permissionMode: 'default',
+    sandboxSelection: 'danger-full-access',
+  });
+  assert.equal(settings.sandbox, 'danger-full-access');
+  assert.equal(settings.approvalPolicy, 'on-request');
+});
 
 test('a warm managed to CLI Login switch resolves missing credentials for the new native child', async () => {
   const codexHome = mkdtempSync(join(tmpdir(), 'codex-native-env-'));

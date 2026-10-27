@@ -1904,6 +1904,45 @@ test('Codex history renders file edits, command reasons, image attachments and c
   expect(refreshedPaths).not.toContain('src/mixed.ts');
 });
 
+test('image drafts stay in their webview when another tab opens or remounts its input', async ({ page, context }) => {
+  test.setTimeout(60_000);
+  const otherPage = await context.newPage();
+  await otherPage.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(otherPage.locator('.input-editable')).toBeVisible();
+  await otherPage.locator('.header .codicon-settings-gear').locator('..').click();
+  await expect(otherPage.locator('.input-editable')).toHaveCount(0);
+
+  await page.locator('.input-editable').evaluate((editable) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const base64 = canvas.toDataURL('image/png').split(',')[1];
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([Uint8Array.from(atob(base64), byte => byte.charCodeAt(0))], 'shot.png', { type: 'image/png' }));
+    editable.dispatchEvent(new ClipboardEvent('paste', { clipboardData: clipboard, bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator('.attachment-item')).toHaveCount(1);
+
+  const newPage = await context.newPage();
+  await newPage.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(newPage.locator('.input-editable')).toBeVisible();
+  await expect(newPage.locator('.attachment-item')).toHaveCount(0);
+
+  await otherPage.locator('button:has(.codicon-arrow-left)').click();
+  await expect(otherPage.locator('.input-editable')).toBeVisible();
+  await expect(otherPage.locator('.attachment-item')).toHaveCount(0);
+
+  await page.locator('.header .codicon-settings-gear').locator('..').click();
+  await expect(page.locator('.input-editable')).toHaveCount(0);
+  await page.locator('button:has(.codicon-arrow-left)').click();
+  await expect(page.locator('.attachment-item')).toHaveCount(1);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.attachment-item')).toHaveCount(1);
+  await page.locator('.attachment-remove').click();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.input-editable')).toBeVisible();
+  await expect(page.locator('.attachment-item')).toHaveCount(0);
+});
+
 test('native image preparation preserves the draft until the owned reply arrives', async ({ page }) => {
   const editable = page.locator('.input-editable');
   await editable.fill('prompt with screenshot');

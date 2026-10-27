@@ -17,11 +17,7 @@ import { installRuntimeProviderDispatchers } from './utils/runtimeProviderCapabi
 import { sendBridgeEvent } from './utils/bridge';
 import { debugLog } from './utils/debug';
 import { forceWebviewRepaint } from './utils/forceWebviewRepaint';
-import {
-  FONT_SIZE_LEVEL_STORAGE_KEY,
-  fontSizeLevelToScale,
-  parseFontSizeLevel,
-} from './utils/fontScale';
+import { fontSizeLevelToScale } from './utils/fontScale';
 import {
   advanceSurfaceDamagePulse,
   beginSurfaceDamagePulse,
@@ -32,6 +28,7 @@ import {
 } from './utils/surfaceDamagePulse';
 import { requestDependencyStatusUntilSettled, waitForBridge } from './utils/bridgeStartup';
 import type { UiFontConfig, CodeFontConfig } from './types/uiFontConfig';
+import { getFontSizeLevel, restoreFontSizeLevel } from './utils/fontSizePreference';
 
 // Silence noisy console output in production (including third-party libs).
 // console.error is preserved so ErrorBoundary and unhandled exceptions still
@@ -144,7 +141,7 @@ function setupScaleRecovery() {
     const fromCss = getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim();
     if (fromCss) return fromCss;
 
-    return String(fontSizeLevelToScale(parseFontSizeLevel(localStorage.getItem(FONT_SIZE_LEVEL_STORAGE_KEY))));
+    return String(fontSizeLevelToScale(getFontSizeLevel()));
   };
 
   let hiddenAt: number | null = null;
@@ -399,11 +396,12 @@ function applyEditorTypographyConfig(config: {
   syncFontFamilies();
 }
 
-function applyUiFontConfig(config: UiFontConfig | string) {
+function applyUiFontConfig(config: UiFontConfig | string, isStartup = false) {
   const normalizedConfig: UiFontConfig =
     typeof config === 'string' ? JSON.parse(config) as UiFontConfig : config;
 
   latestUiFontConfig = normalizedConfig;
+  restoreFontSizeLevel(normalizedConfig.fontSizeLevel, isStartup, normalizedConfig.fontSizeRequestId);
   setUiFontFaceStyle(normalizedConfig);
   syncFontFamilies();
 }
@@ -431,7 +429,7 @@ if (window.__pendingFontConfig) {
 
 if (window.__pendingUiFontConfig) {
   debugLog('[Main] Found pending UI font config, applying...');
-  applyUiFontConfig(window.__pendingUiFontConfig);
+  applyUiFontConfig(window.__pendingUiFontConfig, true);
   delete window.__pendingUiFontConfig;
 }
 

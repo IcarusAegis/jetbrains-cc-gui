@@ -33,6 +33,8 @@ const sendToJava = (message: string) => {
   }
 };
 
+export type CodexSandboxModeOption = 'read-only' | 'workspace-write' | 'danger-full-access';
+
 export interface UseSettingsBasicActionsProps {
   streamingEnabledProp?: boolean;
   onStreamingEnabledChangeProp?: (enabled: boolean) => void;
@@ -42,6 +44,18 @@ export interface UseSettingsBasicActionsProps {
   onAutoOpenFileEnabledChangeProp?: (enabled: boolean) => void;
   permissionDialogTimeoutSecondsProp?: number;
   onPermissionDialogTimeoutChangeProp?: (seconds: number) => void;
+  /**
+   * Live Codex access scope owned by the chat state. The chat sends this value
+   * with every turn, so it is the only truthful source for the panel — the
+   * Java-side legacy `codexSandboxMode` record is never consulted at runtime.
+   */
+  codexSandboxSelectionProp?: CodexSandboxModeOption;
+  /** Provenance of the current scope: 'user' | 'native' | 'migrated' | 'default'. */
+  codexSandboxSourceProp?: string;
+  /** Sandbox the app-server last confirmed; null means "not confirmed yet". */
+  codexSandboxEffectiveProp?: CodexSandboxModeOption | null;
+  /** Writes the choice back into the chat state so the next turn keeps it. */
+  onCodexSandboxSelectionChangeProp?: (mode: CodexSandboxModeOption) => void;
   /** Current chat CLI — prompt enhancer auto mode follows this when available. */
   currentProvider?: string;
 }
@@ -70,10 +84,12 @@ export interface UseSettingsBasicActionsReturn {
   /** Streaming enabled state (prefers prop over local state) */
   streamingEnabled: boolean;
   localStreamingEnabled: boolean;
-  codexSandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access';
+  codexSandboxMode: CodexSandboxModeOption;
   codexSandboxSource: string;
-  codexSandboxDesired: 'read-only' | 'workspace-write' | 'danger-full-access';
-  codexSandboxEffective: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** The scope the next turn will send (same source of truth as the radio). */
+  codexSandboxDesired: CodexSandboxModeOption;
+  /** Last confirmed sandbox, or null when the runtime has not reported one. */
+  codexSandboxEffective: CodexSandboxModeOption | null;
   codexSandboxConflict: boolean;
   /** Send shortcut state (prefers prop over local state) */
   sendShortcut: 'enter' | 'cmdEnter';
@@ -176,9 +192,6 @@ export interface UseSettingsBasicActionsReturn {
   /** @internal */ setLocalStreamingEnabled: (enabled: boolean) => void;
   /** @internal */ setCodexSandboxMode: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
   /** @internal */ setCodexSandboxSource: (source: string) => void;
-  /** @internal */ setCodexSandboxDesired: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
-  /** @internal */ setCodexSandboxEffective: (mode: 'read-only' | 'workspace-write' | 'danger-full-access') => void;
-  /** @internal */ setCodexSandboxConflict: (conflict: boolean) => void;
   /** @internal */ setLocalSendShortcut: (shortcut: 'enter' | 'cmdEnter') => void;
   /** @internal */ setLocalAutoOpenFileEnabled: (enabled: boolean) => void;
   /** @internal */ setCommitPrompt: (prompt: string) => void;
@@ -212,6 +225,10 @@ export function useSettingsBasicActions({
   onAutoOpenFileEnabledChangeProp,
   permissionDialogTimeoutSecondsProp,
   onPermissionDialogTimeoutChangeProp,
+  codexSandboxSelectionProp,
+  codexSandboxSourceProp,
+  codexSandboxEffectiveProp,
+  onCodexSandboxSelectionChangeProp,
   currentProvider,
 }: UseSettingsBasicActionsProps): UseSettingsBasicActionsReturn {
   // Node.js path
@@ -244,17 +261,18 @@ export function useSettingsBasicActions({
   const [localStreamingEnabled, setLocalStreamingEnabled] = useState<boolean>(false);
   const streamingEnabled = streamingEnabledProp ?? localStreamingEnabled;
 
-  const [codexSandboxMode, setCodexSandboxMode] = useState<
-    'read-only' | 'workspace-write' | 'danger-full-access'
-  >('workspace-write');
+  // Codex access scope - prefer the chat-owned props (the value every turn
+  // actually sends), fall back to the Java legacy record only when no chat
+  // state was handed in. `effective` stays null until the runtime confirms a
+  // policy: showing the requested value there was the reported lie.
+  const [codexSandboxMode, setCodexSandboxMode] = useState<CodexSandboxModeOption>('workspace-write');
   const [codexSandboxSource, setCodexSandboxSource] = useState('default');
-  const [codexSandboxDesired, setCodexSandboxDesired] = useState<
-    'read-only' | 'workspace-write' | 'danger-full-access'
-  >('workspace-write');
-  const [codexSandboxEffective, setCodexSandboxEffective] = useState<
-    'read-only' | 'workspace-write' | 'danger-full-access'
-  >('workspace-write');
-  const [codexSandboxConflict, setCodexSandboxConflict] = useState(false);
+  const hasChatSandbox = codexSandboxSelectionProp !== undefined;
+  const effectiveCodexSandboxMode = hasChatSandbox ? codexSandboxSelectionProp : codexSandboxMode;
+  const effectiveCodexSandboxSource = hasChatSandbox ? (codexSandboxSourceProp ?? 'default') : codexSandboxSource;
+  // `effective` is only ever the runtime-confirmed policy: null until the
+  // app-server reports one. Showing the requested value here was the reported lie.
+  const codexSandboxEffective = hasChatSandbox ? (codexSandboxEffectiveProp ?? null) : null;
 
   // Send shortcut configuration - prefer props, fallback to local state
   const [localSendShortcut, setLocalSendShortcut] = useState<'enter' | 'cmdEnter'>('enter');
@@ -459,17 +477,18 @@ export function useSettingsBasicActions({
     }
   }, [onStreamingEnabledChangeProp]);
 
-  const handleCodexSandboxModeChange = useCallback((mode: 'read-only' | 'workspace-write' | 'danger-full-access') => {
+  const handleCodexSandboxModeChange = useCallback((mode: CodexSandboxModeOption) => {
     setCodexSandboxMode(mode);
-    setCodexSandboxDesired(mode);
-    setCodexSandboxConflict(false);
     setCodexSandboxSource('user');
+    // The chat state is what every turn sends; without this the next message
+    // would overwrite the new scope with the stale one.
+    onCodexSandboxSelectionChangeProp?.(mode);
     const payload = { sandboxMode: mode };
     sendToJava(`set_codex_sandbox_mode:${JSON.stringify(payload)}`);
     // New Codex handlers receive provenance and validate the independent
     // access range; the legacy message above remains for older hosts.
     sendToJava(`set_codex_sandbox_selection:${JSON.stringify({ selection: mode, source: 'user' })}`);
-  }, []);
+  }, [onCodexSandboxSelectionChangeProp]);
 
   // Send shortcut change handler
   const handleSendShortcutChange = useCallback((shortcut: 'enter' | 'cmdEnter') => {
@@ -807,16 +826,13 @@ export function useSettingsBasicActions({
     localStreamingEnabled,
     setLocalStreamingEnabled,
     streamingEnabled,
-    codexSandboxMode,
+    codexSandboxMode: effectiveCodexSandboxMode,
     setCodexSandboxMode,
-    codexSandboxSource,
+    codexSandboxSource: effectiveCodexSandboxSource,
     setCodexSandboxSource,
-    codexSandboxDesired,
-    setCodexSandboxDesired,
+    codexSandboxDesired: effectiveCodexSandboxMode,
     codexSandboxEffective,
-    setCodexSandboxEffective,
-    codexSandboxConflict,
-    setCodexSandboxConflict,
+    codexSandboxConflict: false,
     localSendShortcut,
     setLocalSendShortcut,
     sendShortcut,
