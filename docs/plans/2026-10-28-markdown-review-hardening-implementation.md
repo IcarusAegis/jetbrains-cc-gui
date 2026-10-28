@@ -283,3 +283,311 @@ public synchronized List<ReviewBatch> retractAuto(String targetId, String epoch,
 - 每个 PR 独立可回滚;PR-1 触碰推送协议(`publish` 频率/精简状态)与前端 dirty 展示节奏——前后端同包发布,无兼容窗口;若冒烟发现 dirty 期间交互退化,回滚点集中在 1.2 的 `documentChanged` 改动。
 - PR-2 的 ack 协议改动(payload 加 targetId、按 payload 匹配)与 PR-3 撤回链路有耦合,故 PR-3 依赖 PR-2 先合。
 - PR-4 的 interim 协议为新增响应类型,旧前端不识别 interim 会忽略并维持 8s 超时——同包发布后不存在该窗口。
+
+---
+
+## 附录 A:六项关键设计的代码级详稿
+
+以下为评审讨论中标记的 6 项设计决策的展开稿。代码块为**设计形态**(表达结构与意图),非最终实现;`//` 注释说明与现状的差异。
+
+### A.1 1b:影响分级 + 事件驱动推送
+
+**现状回顾**:面板自身的 DocumentListener 每键全量 `publish()`;服务 `track()` 注册的 DocumentListener 每键做受影响清理 + marker 位置同步 + **无条件** `changed()` → 所有面板再各 publish 一次。前端 afterPatch 还会回发 `sync` 触发 reconcile+publish——一次按键 ≈ 2 轮全量推送 + 1 次全文核对。
+
+**新结构**:
+
+```java
+// MarkdownReviewService 新增
+public enum EditImpact { NONE, SHIFT, HIT }
+
+// 订阅 API:Runnable → Consumer<EditImpact>(调用方仅 NativeMarkdownAnnotations 与单测,迁移可控)
+private final List<java.util.function.Consumer<EditImpact>> listeners = new CopyOnWriteArrayList<>();
+```
+
+```java
+// track() 的 documentChanged(替换现有 :394-428 尾部)
+@Override
+public void documentChanged(@NotNull DocumentEvent event) {
+    boolean hit = !affected.isEmpty();              // beforeDocumentChange 已算好(含 preservesSource 例外)
+    synchronized (this) {
+        if (state.config.enabled && state.config.autoDeleteAffected && hit) {
+            /* 现有受影响清理,不变 */
+        }
+        affected.clear();
+        EditImpact impact = classify(event, hit);   // 见下
+        if (impact == NONE) return;                 // ← 1d:无影响零通知,跨文件扇出自然消失
+        /* SHIFT/HIT:marker 位置同步循环保持现状(供随后的轻量/全量发布使用) */
+    }
+    changed(impact);
+}
+
+static EditImpact classify(DocumentEvent event, boolean hit) {
+    if (hit) return HIT;                            // 命中批注区间
+    if (annotationsOfThisDocument.isEmpty()) return NONE;
+    int editStart = event.getOffset();
+    boolean anyAfter = 存在批注 annotation.start >= editStart;
+    return anyAfter ? SHIFT : NONE;                 // 编辑点在全部批注之后 → 谁都不动
+}
+```
+
+```java
+// NativeMarkdownAnnotations
+private final MarkdownReviewService.Consumer listener = impact -> publish(impact != HIT);
+//   ↑ SHIFT → publish(light);HIT → publish(full)
+private final DocumentListener documentListener = new DocumentListener() {
+    @Override public void documentChanged(@NotNull DocumentEvent event) { dirty = true; }  // ← 不再 publish
+};
+//   注册改带生命周期归属:document.addDocumentListener(documentListener, service)  ← deprecated 顺手修
+```
+
+```java
+// publish(boolean light)
+private void publish(boolean light) {
+    /* 门禁(1a)与 enabled 精简短路在前 */
+    ReadAction.run(() -> {
+        state.addProperty("documentVersion", document.getModificationStamp());
+        state.addProperty("dirty", dirty);
+        /* annotations 照发(位置已由 marker 同步,轻量路径也发——高亮要跟着动) */
+        state.add("annotations", GSON.toJsonTree(service.list(file)));
+        if (!light) {                               // light 跳过全文 Mermaid 扫描
+            state.add("diagrams", GSON.toJsonTree(RenderedSelectionMatcher.mermaidRanges(document.getText())));
+        }
+        reply(state);
+    });
+}
+```
+
+**关键决定**:
+
+1. **时间窗不自建**——前端 afterPatch 的 `sync` 就是合并节拍:后端不再每键主动推,一次编辑 = 一个渲染补丁 = 一次 sync = 一次 reconcile+publish。备选(实测 sync 仍高频时):`handle("sync")` 入口加 `Alarm` 100ms 合并(`cancelAllRequests + addRequest(doSync, 100)`,`ready` 不合并)。
+2. **面板自身 listener 保留但只置 dirty**:无批注文档没有服务级监听,面板 listener 是其唯一的 dirty 信号(创建门禁依赖)。
+3. dirty 传到前端的时机从"按键瞬间"变为"下一次 sync/操作"——间隔为 IDE 渲染节拍;`handle("create")` 的 documentVersion 校验仍兜底。冒烟列为观察项。
+
+**测试**:`classify` 表驱动(命中/批注前/批注后/空集/删除跨越);service 级 NONE 零通知、SHIFT→light、HIT→full(计数 listener);listener 异常不中断广播(try/catch + warn)。
+
+### A.2 问题 2 Layer 1:回执按"批次自身身份"匹配
+
+**现状缺陷**:`acknowledge` payload 不带 `targetId`;Java 端用**当前窗口**的 reviewTargetId/epoch 匹配,还要求 payload epoch == 当前 epoch(ClaudeChatWindow.java:2320-2323)。→ 换会话后,对旧批次的一切回执**必然失配**,这是孤儿链的协议级根因。
+
+**协议改动(3 处)**:
+
+```ts
+// useArtifactReviews.ts — payload 增加 targetId
+function acknowledge(batch: ArtifactReviewBatch, status: 'received'|'queued'|'removed') {
+  return sendBridgeEvent('artifact_review_ack', JSON.stringify({
+    id: batch.id,
+    targetId: batch.targetId,        // ← 新增:批次冻结的身份
+    targetEpoch: batch.targetEpoch,
+    status,
+    annotationIds: batch.annotations.map(a => a.id),
+  }));
+}
+
+// bindTarget:换目标时先逐批回执 removed,再清空
+const old = targetRef.current;
+if (old && (old.targetId !== target.targetId || old.targetEpoch !== target.targetEpoch)) {
+  for (const batch of batchesRef.current) acknowledge(batch, 'removed');   // ← 旧身份回执
+  batchesRef.current = []; setBatches([]);
+}
+targetRef.current = target;
+
+// reset():清空前同样逐批回执 removed
+```
+
+```java
+// ClaudeChatWindow — artifact_review_ack 分支(:2313-2328)
+String ackTargetId = ack.get("targetId").getAsString();   // ← 用回执自带的身份
+String ackEpoch = ack.get("targetEpoch").getAsString();
+MarkdownReviewService.getInstance(project)
+    .acknowledge(ackTargetId, ackEpoch, ack.get("id").getAsString(), status, ids);
+// ← 删除"payload epoch 必须等于当前会话 epoch"的校验:回执是历史事实,不属于当前状态
+```
+
+- 服务端 `acknowledge()`(MarkdownReviewService.java:535-549)**零改动**——它本来就按参数三元组精确匹配,一直只是调用方传错身份。
+- 顺序安全:回执读取的是 batch 自带的 targetId/epoch,与 `targetRef` 无关。
+- 安全边界:伪造回执需要知道目标批次 id(与现状同量级威胁),不新增校验。
+
+### A.3 问题 2 Layer 3:配额兜底三级淘汰 + 存活集合注入
+
+```java
+// MarkdownReviewService
+private java.util.function.Supplier<Set<String>> liveTargets = Set::of;  // 默认"全灭"→ 测试/无 UI 环境直接走第②级
+public void setLiveTargetsSupplier(java.util.function.Supplier<Set<String>> supplier) { liveTargets = supplier; }
+
+private ReviewBatch pickVictim() {                 // 替换 :500-506 的单级淘汰
+    Set<String> alive = liveTargets.get();        // 调用线程:EDT(saveBatch 链路)
+    ReviewBatch victim = state.batches.stream().filter(b -> !isPending(b)).findFirst().orElse(null); // ① terminal,现状
+    if (victim == null) victim = state.batches.stream()
+            .filter(b -> isPending(b) && !alive.contains(b.targetId)).findFirst().orElse(null);      // ② 已消亡目标
+    if (victim == null) victim = state.batches.stream().filter(this::isPending).findFirst().orElse(null); // ③ 最旧
+    return victim;                                 // "最旧"=列表序(batches 为 append-only,序即时间序)
+}
+
+// saveBatch 淘汰段
+while (state.batches.size() >= MarkdownReviewLimits.MAX_PENDING_BATCHES) {
+    ReviewBatch victim = pickVictim();
+    if (victim == null) break;
+    state.batches.remove(victim);
+}
+if (state.batches.size() >= MarkdownReviewLimits.MAX_PENDING_BATCHES) {
+    throw new ReviewOperationException(ReviewError.LIMIT_REACHED);
+}
+```
+
+```java
+// ClaudeSDKToolToolWindow 初始化时注册(避免存储层反向 import UI 类)
+MarkdownReviewService.getInstance(project).setLiveTargetsSupplier(() ->
+    getChatWindows(project).stream().map(ClaudeChatWindow::getReviewTargetId)
+        .collect(java.util.stream.Collectors.toUnmodifiableSet()));
+```
+
+- **语义**:淘汰只删"交接记录",批注本体仍在(annotations 独立持久化),用户可重新"加入 CC GUI"——符合拍板依据。
+- 兜底是补漏设计:Layer 1(A.2)+ Layer 2(dropPending)正常工作时永远走不到 ②/③。
+
+### A.4 问题 9:删除/完成的草稿撤回链路(复用前端 remove 通道)
+
+**链路**:
+
+```
+预览点"删除/标记完成"
+ → handle("delete"/"complete") → service.update/complete(批注本体,现有)
+ → [新] service.retractAutoByAnnotation(annotationId)          // 反查未决 automatic 批次
+ → 对每个受影响批次:按 batch.targetId 找窗口
+    → window.removeArtifactReviewAnnotation(batchId, annotationId)   // 新窗口方法
+       → callJavaScript("removeArtifactReviewAnnotation", …)
+          → 前端 window.removeArtifactReviewAnnotation = (b,a) => remove(b,a)
+             → 现有 remove():过滤条目 + acknowledge('received'/'removed')  ← 回执自动闭环
+```
+
+```java
+// MarkdownReviewService 新增
+/** 从含该批注的未决 automatic review 批次中移除它;批次空则转 removed。返回受影响批次拷贝。 */
+public synchronized List<ReviewBatch> retractAutoByAnnotation(String annotationId) {
+    List<ReviewBatch> touched = new ArrayList<>();
+    for (ReviewBatch batch : state.batches) {
+        if (!isPending(batch) || !batch.automatic || !"review".equals(batch.kind)) continue;  // 引用/手动不动(拍板)
+        boolean removed = batch.annotations.removeIf(a -> annotationId.equals(a.id));
+        if (!removed) continue;
+        if (batch.annotations.isEmpty()) batch.state = "removed";
+        touched.add(copy(batch, ReviewBatch.class));
+    }
+    return touched;
+}
+```
+
+```java
+// NativeMarkdownAnnotations.handle() 的 delete/complete 分支尾部
+if (service.getConfig().autoAddToChat) {
+    for (ReviewBatch batch : service.retractAutoByAnnotation(annotationId)  /* id 取自请求 */) {
+        ClaudeChatWindow window = ClaudeSDKToolWindow.getChatWindows(project).stream()
+                .filter(w -> batch.targetId.equals(w.getReviewTargetId())).findFirst().orElse(null);
+        if (window != null) window.removeArtifactReviewAnnotation(batch.id, annotationId);
+        // 窗口不在(目标已消亡)→ 无需撤:前端看不到它,Layer 2 会 dropPending
+    }
+}
+```
+
+- 前端接线一行:`window.removeArtifactReviewAnnotation = (batchId, annId) => remove(batchId, annId);`(useArtifactReviews.ts 的 useEffect 内,与 addArtifactReview 并列注册/注销)。
+- **时序安全**:前端 `remove()` 幂等(条目不存在 = no-op + 'received' 回执);用户同时在聊天区手动删 = 两次过滤,结果一致。
+- reopen(取消完成)不恢复草稿——草稿是"未发送快照",reopen 后可重新 transfer,文案注明。
+
+### A.5 问题 5:interim 协议 + 意图签名幂等
+
+**interim(主修复——顺带掐断"超时后可再点")**:
+
+```java
+// NativeMarkdownAnnotations.transfer(),弹框前
+if (!automatic && windows.size() > 1) {
+    JsonObject interim = new JsonObject();
+    interim.addProperty("requestId", requestId);
+    interim.addProperty("kind", "interim");
+    interim.addProperty("messageKey", "reviewTransferring");
+    reply(interim);                                  // ← 模态框弹出之前
+    /* 现有 Messages.showChooseDialog(该 API 的非废弃替换在 4.1 一并做) */
+}
+// interim 不写入 results 缓存(不应被重放);终态照常 remember()+reply()
+```
+
+```ts
+// index.ts send() 的响应分支
+if (parsed.kind === 'interim') {
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {                  // 兜底阈值 5 分钟
+        callbacks.delete(requestId); message = labels.timeout; pending = false; render(); resolve(false);
+    }, 300_000);
+    message = labels.transferring;                    // 状态条:"正在等待选择聊天…"
+    render();
+    return;                                           // 不 resolve → pending 保持 true → 按钮仍禁用
+}
+```
+
+**意图签名幂等(兜底,防 interim 丢失/旧脚本)**:
+
+```java
+// NativeMarkdownAnnotations 字段
+private final Map<String, String> inFlightIntents = new LinkedHashMap<>() { /* 超过 64 清最旧 */ };
+
+// handle() 的 create/quote 入口(校验之后、执行之前)
+String signature = hash(panelId + "|" + action + "|" + start + "|" + end + "|"
+        + selected + "|" + comment + "|" + document.getModificationStamp());
+String owner = inFlightIntents.get(signature);
+if (owner != null) {
+    JsonObject done = results.get(owner);
+    if (done != null) { reply(done); return; }        // 前一请求已有终态 → 重放
+    reply(interimOf(requestId)); return;              // 仍在飞 → 回 interim,不重复创建
+}
+inFlightIntents.put(signature, requestId);
+/* 执行;remember()/failTransfer() 时 inFlightIntents.values().remove(requestId) */
+```
+
+- 签名含 `documentVersion` → 文档变了就是新意图,不会错误去重;重放依赖现有 `results` LRU(128)。
+- **防重复的两道闸**:interim 让按钮在等待期间不可点(主);签名幂等拦住同意图的并发/重试请求(兜)。误报场景由 interim 消灭,正常并发由签名拦截。
+
+### A.6 问题 7:错误编号化(枚举 → 词典)
+
+**枚举 ↔ 现有抛出点对照(全部 throw 一次迁移)**:
+
+| ReviewError | 现有英文串(出处) | args |
+| --- | --- | --- |
+| DISABLED | "…are disabled in CC GUI settings."(NativeMarkdownAnnotations:159) | — |
+| PREVIEW_CHANGED | "Preview changed. Select the text again."(:162) | — |
+| DOC_CHANGED | "Document changed. Wait for the preview…"(NativeMarkdownAnnotations:168) | — |
+| SELECTION_MISMATCH | :181(现为 messageKey,统一并入 errorKey) | — |
+| COMMENT_EMPTY | service:216、:288 | — |
+| NOT_FOUND | service:319 + 两处 orElseThrow(:203、:213,即计划 5c) | id |
+| REVISION_CONFLICT | service:278、:301 | — |
+| LIMIT_REACHED | service:508(A.3 起改抛枚举) | — |
+| TOO_LARGE | NativeMarkdownAnnotations:174、:319 | 限值 |
+| TARGET_UNAVAILABLE | failTransfer 四条(:279-307) | detail(仅入日志) |
+| ID_LIST_INVALID | :231 | — |
+| BAD_REQUEST | 问题 6 新增三类畸形请求 | — |
+
+```java
+// 公共异常:service 与 annotations 共用;仍是 RuntimeException,调用方/单测签名不变
+public class ReviewOperationException extends RuntimeException {
+    public final ReviewError error; public final Object[] args;
+}
+
+// handle() catch(NativeMarkdownAnnotations:242-245)
+} catch (ReviewOperationException error) {
+    response.addProperty("status", "error");
+    response.addProperty("errorKey", error.error.name());
+    response.add("args", GSON.toJsonTree(error.args));   // 不再写 message 英文原文
+} catch (RuntimeException error) {                          // 兜底:未归类
+    response.addProperty("status", "error");
+    response.addProperty("errorKey", "INTERNAL");
+    LOG.warn("Unmapped review operation failure", error);
+}
+```
+
+```ts
+// labels.ts:浮层自带的 10 语言词典(不进 i18next——浮层是独立 bundle,labels.ts 本就是它的翻译层)
+errorKeys: { DISABLED: '设置中已关闭 Markdown 批注。', DOC_CHANGED: '文档已变化,请等预览更新后重新选择。',
+             NOT_FOUND: '批注 #{args} 已不存在。', /* …12 键 ×10 语言 */ }
+// index.ts 响应分支
+message = parsed.errorKey && labels.errorKeys[parsed.errorKey]
+    ? labels.errorKeys[parsed.errorKey].replace('{args}', String(parsed.args?.[0] ?? ''))
+    : labels.failed;
+```
+
+**完整性测试**:枚举名集合 ↔ 10 份 labels.errorKeys 键集合双向比对(前端单测,与问题 11 的 locale 完整性测试互为补充);冒烟遍历失败场景断言无英文裸串、无 "No value present"。
